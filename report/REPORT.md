@@ -15,7 +15,7 @@ subtitle: "MLOps Assignment 2 · L230518_A2_Ops"
 | **MLflow tracking** | https://dagshub.com/Rebelhere/L230518_A2_Ops.mlflow |
 | **Model API (Vercel)** | https://l230518-a2-ops-api.vercel.app (`GET /health`, `POST /predict` with `X-API-Key`) |
 | **Web app** | Runs on localhost (`docker compose up`) and calls the cloud API, as Task 7 requires |
-| **Graded commit** | `c881442eec645c22e8b4c3eec80665a5ae2148d4` |
+| **Graded commit** | `eb73a05924cd0c721e5345ffe7d85f2ded98bca6` (all code, model pipeline and evidence; the only later commit records this hash in the report) |
 
 **Disclosure of AI assistance.**
 - **Claude Code (Anthropic), used as a coding assistant in VS Code.** It helped me:
