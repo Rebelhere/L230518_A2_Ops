@@ -1,0 +1,6 @@
+[core]
+    remote = origin
+['remote "origin"']
+    url = https://dagshub.com/Rebelhere/L230518_A2_Ops.dvc
+    read_timeout = 600
+    connect_timeout = 600
