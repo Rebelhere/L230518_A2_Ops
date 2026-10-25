@@ -1,3 +1,7 @@
 venv/
 .env
 /data
+mlruns/
+toy.db
+__pycache__/
+models/
