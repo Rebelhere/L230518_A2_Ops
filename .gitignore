@@ -5,3 +5,4 @@ mlruns/
 toy.db
 __pycache__/
 models/
+tuner_logs/
