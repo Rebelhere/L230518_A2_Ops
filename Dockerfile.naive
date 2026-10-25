@@ -1,0 +1,8 @@
+# "Before" image for Task 6.4 only. Deliberately unoptimised: full Debian base, full tensorflow wheel,
+# pip cache kept, everything copied before installing. Build with:
+#   docker build -f Dockerfile.naive -t visionguard:naive .
+FROM python:3.12
+WORKDIR /srv
+COPY . .
+RUN pip install -r requirements-app.txt tensorflow==2.21.0 keras==3.15.1
+CMD ["python", "wsgi.py", "web"]

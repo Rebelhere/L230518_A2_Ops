@@ -1,6 +1,7 @@
 import pandas as pd, tensorflow as tf
 from tensorflow import keras
-from src.config import IMG_SIZE, BATCH, SEED, SPLITS
+from src.config import BATCH, SEED, SPLITS
+from src.preprocess import decode_resize
 
 AUG = keras.Sequential([
     keras.layers.RandomFlip("horizontal"),
@@ -10,9 +11,7 @@ AUG = keras.Sequential([
 ], name="augmentation")
 
 def _load(path, label):
-    img = tf.io.decode_image(tf.io.read_file(path), channels=3, expand_animations=False)
-    img = tf.image.resize(img, (IMG_SIZE, IMG_SIZE))
-    return img, tf.cast(label, tf.float32)
+    return decode_resize(tf.io.read_file(path)), tf.cast(label, tf.float32)
 
 def make_ds(split, augment=False, shuffle=False):
     df = pd.read_csv(SPLITS[split])

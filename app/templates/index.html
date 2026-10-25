@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Upload{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Is this image AI-generated?</h1>
+  <p class="muted">Upload a JPG or PNG (max {{ '%g' % max_mb }} MB). The image is analysed in memory and never stored.</p>
+  <form action="{{ url_for('vg.predict') }}" method="post" enctype="multipart/form-data" class="upload">
+    <label class="drop" id="drop">
+      <input type="file" name="image" id="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" required>
+      <img id="preview" alt="" hidden>
+      <span id="hint">Click to choose an image, or drop it here</span>
+    </label>
+    <button type="submit">Analyse image</button>
+  </form>
+</section>
+<script>
+  const f = document.getElementById('file'), img = document.getElementById('preview'), hint = document.getElementById('hint');
+  f.addEventListener('change', () => {
+    const file = f.files[0]; if (!file) return;
+    img.src = URL.createObjectURL(file); img.hidden = false; hint.textContent = file.name;
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,6 @@
+line-length = 130
+
+[lint]
+select = ["E", "F", "W"]
+# one-line `a; b` statements and compact imports are this repo's house style
+ignore = ["E401", "E702", "E701", "E731"]

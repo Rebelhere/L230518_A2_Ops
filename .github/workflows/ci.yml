@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-app.txt
+      - name: Install dependencies
+        run: pip install -r requirements-app.txt pytest ruff
+      - name: Lint
+        run: ruff check app api serving tests wsgi.py
+      - name: Tests
+        run: python -m pytest -q tests
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build web image
+        run: docker build -t l230518_a2_ops-web:ci .
+      - name: Image size
+        run: docker images l230518_a2_ops-web:ci

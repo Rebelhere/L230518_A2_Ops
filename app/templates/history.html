@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}History{% endblock %}
+{% block content %}
+<section class="card wide">
+  <h1>Prediction history</h1>
+  <p class="muted">{{ total }} request{{ '' if total == 1 else 's' }} logged in the database. Newest first.</p>
+  {% if rows %}
+  <div class="scroll">
+  <table>
+    <thead><tr><th>#</th><th>When (UTC)</th><th>File</th><th>Decision</th><th>Confidence</th><th>p(AI)</th><th>Model</th><th>Served by</th><th>Latency</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><a href="{{ url_for('vg.result', pid=r.id) }}">{{ r.id }}</a></td>
+        <td class="nowrap">{{ r.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+        <td class="file" title="sha256 {{ r.sha256 }}">{{ r.filename }}</td>
+        <td><span class="pill {{ 'ai' if r.label == 'AI-generated' else 'real' }}">{{ r.label }}</span></td>
+        <td class="num">{{ '%.0f' % (r.confidence * 100) }}%</td>
+        <td class="num">{{ '%.3f' % r.p_ai }}</td>
+        <td class="nowrap">v{{ r.model_version }}</td>
+        <td>{{ 'cloud API' if r.mode == 'remote' else 'local' }}</td>
+        <td class="num">{{ '%.0f' % r.latency_ms }} ms</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if pages > 1 %}
+  <p class="pager">
+    {% if page > 1 %}<a href="{{ url_for('vg.history', page=page-1) }}">← Newer</a>{% endif %}
+    Page {{ page }} of {{ pages }}
+    {% if page < pages %}<a href="{{ url_for('vg.history', page=page+1) }}">Older →</a>{% endif %}
+  </p>
+  {% endif %}
+  {% else %}
+  <p>No predictions yet. <a href="{{ url_for('vg.index') }}">Upload an image</a>.</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,23 @@
+# keep the build context small and secrets out of every image
+.git
+.github
+.env
+.env.*
+!.env.example
+venv/
+data/
+mlruns/
+tuner_logs/
+reports/
+report/
+splits/
+scripts/
+tests/
+**/__pycache__
+*.db
+toy.db
+.dvc/
+*.dvc
+models/*
+!models/champion.keras
+!models/champion_meta.json

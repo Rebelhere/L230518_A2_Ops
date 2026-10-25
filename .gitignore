@@ -6,3 +6,6 @@ toy.db
 __pycache__/
 models/
 tuner_logs/
+*.db
+.pytest_cache/
+.ruff_cache/

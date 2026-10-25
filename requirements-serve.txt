@@ -1,0 +1,4 @@
+# What the containers install: app deps + CPU-only TensorFlow (same versions the model was trained with)
+-r requirements-app.txt
+tensorflow-cpu==2.21.0
+keras==3.15.1
