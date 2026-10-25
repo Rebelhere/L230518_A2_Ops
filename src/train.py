@@ -135,7 +135,12 @@ with mlflow.start_run(run_name=args.name) as run:
     mlflow.log_artifacts("splits", artifact_path="splits")
     Path("reports/pip_freeze.txt").write_text(subprocess.run([sys.executable, "-m", "pip", "freeze"], capture_output=True, text=True).stdout)
     mlflow.log_artifact("reports/pip_freeze.txt")
-    mlflow.keras.log_model(model, artifact_path="model")
+    try:
+        mlflow.keras.log_model(model, artifact_path="model")
+    except Exception as e:
+        print("log_model failed, attaching .keras file instead:", e)
+        model.save(f"models/{args.name}_final.keras")
+        mlflow.log_artifact(f"models/{args.name}_final.keras", artifact_path="model_file")
 
     out = Path("reports/runs_summary.csv")
     pd.DataFrame([row]).to_csv(out, mode="a", header=not out.exists(), index=False)
