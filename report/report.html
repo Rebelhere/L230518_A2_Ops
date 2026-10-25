@@ -25,7 +25,7 @@ hr { display: none; }
 <tbody>
 <tr>
 <td><strong>Name</strong></td>
-<td>⏳ <em>your full name</em></td>
+<td>Muhammad Rahim</td>
 </tr>
 <tr>
 <td><strong>Roll number</strong></td>
@@ -33,7 +33,7 @@ hr { display: none; }
 </tr>
 <tr>
 <td><strong>Project name</strong></td>
-<td>L230518_A2_Ops (GitHub, DagsHub, registry, GCP project and Cloud Run service)</td>
+<td>L230518_A2_Ops (GitHub, DagsHub, model registry, Vercel project l230518-a2-ops-api)</td>
 </tr>
 <tr>
 <td><strong>GitHub</strong></td>
@@ -48,8 +48,8 @@ hr { display: none; }
 <td>https://dagshub.com/Rebelhere/L230518_A2_Ops.mlflow</td>
 </tr>
 <tr>
-<td><strong>Model API (Cloud Run)</strong></td>
-<td>⏳ <code>https://l230518-a2-ops-api-….run.app</code></td>
+<td><strong>Model API (Vercel)</strong></td>
+<td>https://l230518-a2-ops-api.vercel.app (<code>GET /health</code>, <code>POST /predict</code> with <code>X-API-Key</code>)</td>
 </tr>
 <tr>
 <td><strong>Web app</strong></td>
@@ -57,7 +57,7 @@ hr { display: none; }
 </tr>
 <tr>
 <td><strong>Graded commit</strong></td>
-<td>⏳ <code>git rev-parse HEAD</code> at submission</td>
+<td><code>c881442eec645c22e8b4c3eec80665a5ae2148d4</code></td>
 </tr>
 </tbody>
 </table>
@@ -68,7 +68,7 @@ hr { display: none; }
   - draft and structure this report from my terminal output and screenshots.
 - <strong>My own work:</strong> I ran every command, training run, experiment and deployment myself. I took the screenshots and checked every number in the report against my own outputs.
 - <strong>Other sources:</strong>
-  - the official TensorFlow/Keras, MLflow, DagsHub, DVC, Docker and Google Cloud Run documentation;
+  - the official TensorFlow/Keras, MLflow, DagsHub, DVC, Docker, Vercel and LiteRT documentation;
   - the Kaggle dataset page.</p>
 <hr />
 <h1>Chapter 1: Data understanding and versioning</h1>
@@ -674,7 +674,17 @@ hr { display: none; }
 - Over many trials, some configurations win partly by luck on those particular images. Taking the maximum selects that luck, which is a <strong>winner's curse</strong>: the best trial's validation score is optimistically biased.
 - Trials 1 and 3 had almost the same settings (60 layers, lr 1.8e-4 vs 1.9e-4) but AUCs of 0.773 and 0.748, so the noise is about the size of the gaps between trials.
 - This is why the <strong>test set is used only once</strong>, after all choices are made, and why the reported performance comes from the test set, not from the best validation score.</p>
-<p>⏳ <em>Add a terminal screenshot of both tuner runs: <code>img/2.7_toy_tuner.png</code>, <code>img/2.7_vg_tuner.png</code>.</em></p>
+<p><figure><img src="img/2.7_tuner_start.png"><figcaption>Figure 2.7a – toy search starting (trial 1)</figcaption></figure>
+<figure><img src="img/2.7_toy_trial1.png"><figcaption>Figure 2.7b – toy trial 1: units 192, lr 1.2e-4 → val_accuracy 0.833</figcaption></figure>
+<figure><img src="img/2.7_toy_trial2.png"><figcaption>Figure 2.7c – toy trial 2 and the running best</figcaption></figure>
+<figure><img src="img/2.7_toy_trial6.png"><figcaption>Figure 2.7d – toy trial 6: units 256, lr 1.7e-3 (the eventual best)</figcaption></figure>
+<figure><img src="img/2.7_vg_tuner.png"><figcaption>Figure 2.7e – VisionGuard search: 8 trials ranked, best settings</figcaption></figure>
+<figure><img src="img/2.7_vg_tuner_means.png"><figcaption>Figure 2.7f – mean val AUC by dropout and by unfrozen layers; Spearman(lr, AUC) = 0.12</figcaption></figure></p>
+<p>The grouped means in Figure 2.7f back up the conclusion above:
+- <strong>AUC rises steadily with the number of unfrozen layers:</strong> 0.691 (0) → 0.717 (10) → 0.745 (30) → 0.761 (60).
+- <strong>Dropout barely matters:</strong> 0.719–0.727.
+- <strong>Learning rate on its own correlates only weakly with AUC</strong> (Spearman 0.12) inside the searched range.</p>
+<p>So the <strong>number of unfrozen layers mattered most</strong>.</p>
 <h2>Bonus: Grad-CAM</h2>
 <p><code>scripts/gradcam.py</code> computes Grad-CAM from the last convolutional block of MobileNetV2 (7×7×1280) for 4 correct and 4 wrong test predictions at t = 0.771.</p>
 <figure><img src="../reports/figs/gradcam.png"><figcaption>Figure 2.8 – Grad-CAM: top = image, bottom = heat map (red = most influence on p(AI))</figcaption></figure>
@@ -894,7 +904,8 @@ hr { display: none; }
 - Serving therefore never calls DagsHub. A registry call per request would add seconds of latency, fail whenever DagsHub is down, and hit API rate limits.
 - Promoting a new model means: move the alias, re-run the export, then restart or rebuild.</p>
 <figure><img src="img/3.6_registry.png"><figcaption>Figure 3.6a – registry with two versions and the champion alias</figcaption></figure>
-<p>⏳ <em>Add a terminal screenshot of <code>python -m scripts.load_champion &lt;image&gt;</code>: <code>img/3.6_load_champion.png</code>.</em></p>
+<figure><img src="img/3.6_load_champion.png"><figcaption>Figure 3.6b – scripts/load_champion.py resolves @champion → version 2 (run mobilenet_ft_lr1e-4), downloads it once and classifies one image: p(AI) = 0.999 → AI-generated</figcaption></figure>
+<p>This script prints the registry tag threshold 0.366, the validation-F1 threshold stored when the version was registered. The deployed services use the stricter <strong>0.771</strong> chosen in 2.5, set through the <code>THRESHOLD</code> environment variable, so promoting a model never silently changes the false-alarm policy.</p>
 <hr />
 <h1>Chapter 4: Flask web application</h1>
 <p><strong>Code layout:</strong>
@@ -931,7 +942,7 @@ hr { display: none; }
   - nearest-neighbour instead of bilinear resizing.
 - Any of these produces inputs the model never saw. The predictions then silently degrade (training/serving skew), and no error is raised.
 - I avoid this by construction: both paths import the same <code>decode_resize</code>, and the [-1, 1] scaling lives inside the saved model.</p>
-<p>⏳ <em>Screenshot of the same command in your terminal:</em> <code>python -m serving.inference &lt;ai.jpg&gt; &lt;real.jpg&gt;</code> → <code>img/4.1_inference_console.png</code></p>
+<figure><img src="img/4.1_inference_console.png"><figcaption>Figure 4.1 – the inference module: model loaded once (29.5 s on this run), then each image in well under a second</figcaption></figure>
 <h2>4.2 Routes and validation</h2>
 <table>
 <thead>
@@ -1049,11 +1060,38 @@ hr { display: none; }
 <pre><code class="language-sql">SELECT id, created_at, label, round(p_ai::numeric,3), model_version, mode FROM predictions ORDER BY id DESC;
 </code></pre>
 <p><figure><img src="img/4.3_history.png"><figcaption>Figure 5a – history page from the database</figcaption></figure>
-⏳ <figure><img src="img/5_db_rows.png"><figcaption>Figure 5b – the same rows queried in Postgres</figcaption></figure></p>
+<figure><img src="img/5_db_empty.png"><figcaption>Figure 5b – the predictions table was empty right after the stack started</figcaption></figure>
+<figure><img src="img/6.3c_history_compose.png"><figcaption>Figure 5c – history page served by the Compose stack (Postgres)</figcaption></figure></p>
+<p>After 4 local and 6 remote predictions, the same table queried directly in Postgres (<code>docker compose exec db psql …</code>):</p>
+<pre><code> id |     created_utc     |    label     | p_ai  | ver |  mode  |  ms
+----+---------------------+--------------+-------+-----+--------+------
+  1 | 2026-10-25 19:16:23 | AI-generated | 0.973 | 2   | local  | 1614
+  2 | 2026-10-25 19:16:36 | AI-generated | 0.960 | 2   | local  | 1197
+  3 | 2026-10-25 19:17:02 | Real         | 0.149 | 2   | local  |  338
+  4 | 2026-10-25 19:17:13 | Real         | 0.059 | 2   | local  | 1018
+  5 | 2026-10-25 21:33:36 | AI-generated | 0.999 | 2   | remote |   40
+  6 | 2026-10-25 21:33:53 | AI-generated | 0.973 | 2   | remote |   57
+  7 | 2026-10-25 21:34:15 | AI-generated | 0.996 | 2   | remote |   23
+  8 | 2026-10-25 21:34:29 | Real         | 0.252 | 2   | remote |   24
+  9 | 2026-10-25 21:34:41 | Real         | 0.151 | 2   | remote |   42
+ 10 | 2026-10-25 21:35:20 | AI-generated | 0.803 | 2   | remote |   23
+(10 rows)
+</code></pre>
+<p>Each row answers what was decided (<code>label</code>, <code>p_ai</code>), when (<code>created_utc</code>), by which model (<code>ver</code> 2 of <code>L230518_A2_Ops_VisionGuard</code>) and how confidently. Rows survive container restarts because Postgres stores them in the <code>pgdata</code> volume.</p>
 <hr />
 <h1>Chapter 6: Containerisation with Docker and Docker Compose</h1>
 <h2>6.1 Docker warm-up</h2>
-<p>⏳ <em>Screenshots <code>6.1a</code>–<code>6.1f</code>, following <code>report/RUNBOOK.md</code> §6.1, with the ready-made <code>nginx:alpine</code> image: pull/images, run with <code>-p 8081:80</code> and <code>-v</code>, browser, logs, <code>exec sh</code>, then stop/rm/rmi.</em></p>
+<p>I practised with the ready-made <code>nginx:alpine</code> image before touching my own project:</p>
+<p><figure><img src="img/6.1a_pull.png"><figcaption>Figure 6.1a – docker pull downloads the image layer by layer; docker images lists local images</figcaption></figure>
+<figure><img src="img/6.1b_run.png"><figcaption>Figure 6.1b – docker run -d -p 8081:80 -v $HOME\nginx_toy:/usr/share/nginx/html:ro; docker ps shows the mapping 0.0.0.0:8081-&gt;80</figcaption></figure>
+<figure><img src="img/6.1c_browser.png"><figcaption>Figure 6.1c – the page served from my mounted folder at localhost:8081</figcaption></figure>
+<figure><img src="img/6.1d_logs.png"><figcaption>Figure 6.1d – docker logs: nginx start-up plus my two browser requests</figcaption></figure>
+<figure><img src="img/6.1e_shell.png"><figcaption>Figure 6.1e – docker exec -it toy-nginx sh: a shell inside the container (root, Alpine 3.24, my mounted index.html)</figcaption></figure>
+<figure><img src="img/6.1f_cleanup.png"><figcaption>Figure 6.1f – docker stop / rm / ps -a / rmi</figcaption></figure></p>
+<p>What each step shows:
+- <code>-v</code> made my host folder appear inside the container, so editing <code>index.html</code> on Windows changes the page without a rebuild.
+- <code>-p 8081:80</code> forwarded host port 8081 to the container's port 80.
+- Inside the container <code>whoami</code> returns <code>root</code>. That is the default which my own Dockerfile avoids (6.2).</p>
 <p><strong>Definitions (my own words):</strong>
 - <strong>Image</strong>: a read-only template (filesystem + metadata such as the default command), built from a Dockerfile and identified by name:tag.
 - <strong>Container</strong>: a running (or stopped) instance of an image. It is a process with its own isolated filesystem, network and process space, plus a thin writable layer on top of the image.
@@ -1073,11 +1111,11 @@ hr { display: none; }
 6. <strong><code>HEALTHCHECK</code>.</strong> It calls <code>/health</code> every 30 s, with a 60 s start period because the model takes time to load. Docker and Compose then report <code>healthy</code> or <code>unhealthy</code>.
 7. <strong><code>CMD ["python", "wsgi.py", "web"]</code>.</strong> It starts waitress, with debug off.</p>
 <p><strong>Ignore file.</strong> <code>.dockerignore</code> excludes <code>venv/</code>, <code>data/</code> (500 MB), <code>mlruns/</code>, <code>tuner_logs/</code>, <code>.git</code>, <code>.env</code> and all non-champion models. This keeps the build context small and <strong>keeps secrets out of the image</strong>.</p>
-<p><strong>Secrets.</strong> No secret appears in the Dockerfile. Passwords and keys arrive at run time as environment variables, from Compose or Cloud Run.</p>
+<p><strong>Secrets.</strong> No secret appears in the Dockerfile. Passwords and keys arrive at run time as environment variables, from Compose, or as encrypted environment variables on the cloud host.</p>
 <p><strong>TensorFlow package.</strong> I chose <strong><code>tensorflow-cpu==2.21.0</code></strong> (with <code>keras==3.15.1</code>, the training versions) instead of <code>tensorflow</code>.
 - The full Linux wheel bundles CUDA/GPU kernels, which the server (no GPU) would never use, and its installed size is several hundred MB bigger.
 - Inference on one 224×224 image takes about 0.3 s on a CPU, which is fast enough for this product.</p>
-<figure><img src="img/6.2_whoami.png"><figcaption>Figure 6.2 – user inside the container is app, not root</figcaption></figure>
+<figure><img src="img/6.3b_whoami_port.png"><figcaption>Figure 6.2 – docker compose exec web whoami → app; id → uid=10001(app), not root</figcaption></figure>
 <h2>6.3 Compose stack</h2>
 <p>The file is <a href="https://github.com/Rebelhere/L230518_A2_Ops/blob/main/docker-compose.yml"><code>docker-compose.yml</code></a>. It defines two services:
 - <strong><code>db</code></strong>: <code>postgres:16-alpine</code>.
@@ -1094,10 +1132,22 @@ hr { display: none; }
 - The 17 MB model is not baked into an image that CI builds from GitHub, where <code>models/</code> is git-ignored.
 - Read-only means the app can't modify it.</p>
 <p>For the cloud, the opposite choice is right, and <code>Dockerfile.api</code> builds the model in. That is explained in Chapter 7.</p>
-<p>⏳ <figure><img src="img/6.3a_ps_healthy.png"><figcaption>Figure 6.3a – both services healthy</figcaption></figure>
-⏳ <figure><img src="img/6.3b_db_closed.png"><figcaption>Figure 6.3b – port 5432 is closed from the host</figcaption></figure></p>
+<figure><img src="img/6.3a_ps_healthy.png"><figcaption>Figure 6.3a – docker compose up: network, named volume, db Healthy before web starts; ps shows db 5432/tcp with no host mapping</figcaption></figure>
+<p><strong>Proof that the database port is closed, and a trap I fell into.</strong>
+- <code>docker compose port db 5432</code> returns nothing usable ("invalid IP:0"): Compose publishes no host port for <code>db</code>.
+- <code>docker compose ps</code> lists it only as <code>5432/tcp</code>, with no <code>0.0.0.0:</code> mapping.
+- <code>docker inspect l230518_a2_ops-db-1</code> confirms it: <code>PortBindings {}</code> and <code>"5432/tcp": null</code>.</p>
+<p>However, <code>Test-NetConnection localhost -Port 5432</code> returned <strong>True</strong> (Figure 6.2). From the logs and tools alone I traced why:
+- <code>netstat -ano</code> shows PID 7268 listening on 5432.
+- <code>tasklist</code> names it <code>postgres.exe</code>, which is the Windows service <strong><code>postgresql-x64-17</code></strong>, a separate PostgreSQL 17 installed natively on my laptop for another course.
+- The container runs PostgreSQL 16.</p>
+<p>So the open port belongs to a different server. The Compose database itself is only reachable on the internal network, as <code>db:5432</code> from <code>web</code>. The lesson: a port check proves a port is open, not <em>which</em> process owns it.</p>
+<pre><code>&gt; netstat -ano | findstr :5432          TCP 0.0.0.0:5432  LISTENING  7268
+&gt; tasklist /FI &quot;PID eq 7268&quot;            postgres.exe   (service postgresql-x64-17)
+&gt; docker inspect l230518_a2_ops-db-1 --format '{{json .HostConfig.PortBindings}} {{json .NetworkSettings.Ports}}'
+{} {&quot;5432/tcp&quot;:null}
+</code></pre>
 <h2>6.4 Image analysis</h2>
-<p>⏳ <em>Fill in after running RUNBOOK §6.4:</em></p>
 <table>
 <thead>
 <tr>
@@ -1114,27 +1164,79 @@ hr { display: none; }
 <td>python:3.12 (full)</td>
 <td>tensorflow</td>
 <td>kept</td>
-<td>⏳</td>
+<td><strong>5.92 GB</strong> on disk (1.75 GB compressed)</td>
 </tr>
 <tr>
 <td><code>l230518_a2_ops-web</code> (<code>Dockerfile</code>)</td>
 <td>python:3.12-slim</td>
 <td>tensorflow-cpu</td>
 <td>none</td>
-<td>⏳</td>
+<td><strong>2.23 GB</strong> on disk (0.42 GB compressed)</td>
 </tr>
 </tbody>
 </table>
-<p><strong>Largest layers.</strong> <code>docker history</code> shows which layers are largest. By far the largest is the <code>pip install</code> layer (TensorFlow, about 90% of the image), followed by the base OS layer. The source code layers are only kilobytes.</p>
-<p><strong>Optimisation applied.</strong> A slim base, the CPU-only wheel, <code>--no-cache-dir</code> and the ignore file. ⏳ <em>Conclusion with the two numbers.</em></p>
+<p><strong>Largest layers</strong> (<code>docker history</code>, Figures 6.4b–c):</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>naive</th>
+<th>optimised</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pip install</code> (TensorFlow + deps)</td>
+<td><strong>2.96 GB</strong></td>
+<td><strong>1.67 GB</strong></td>
+</tr>
+<tr>
+<td>base OS (Debian full vs slim)</td>
+<td>hundreds of MB (compilers, headers)</td>
+<td>87.7 MB</td>
+</tr>
+<tr>
+<td>source code</td>
+<td>16.9 MB (<code>COPY . .</code>, everything)</td>
+<td>about 0.2 MB in 5 small layers</td>
+</tr>
+</tbody>
+</table>
+<p><figure><img src="img/6.4a_naive_build.png"><figcaption>Figure 6.4a – building the naive image (the pip step alone took 17 min)</figcaption></figure>
+<figure><img src="img/6.4b_history_web.png"><figcaption>Figure 6.4b – layers of the optimised image: the pip layer dominates, code layers are kilobytes</figcaption></figure>
+<figure><img src="img/6.4c_history_naive.png"><figcaption>Figure 6.4c – layers of the naive image</figcaption></figure></p>
+<p><strong>Optimisation applied.</strong> A slim base, the CPU-only <code>tensorflow-cpu</code> wheel instead of <code>tensorflow</code>, <code>--no-cache-dir</code>, and the ignore file.</p>
+<p><strong>Conclusion.</strong> The image went from <strong>5.92 GB to 2.23 GB on disk (−62%)</strong> and from 1.75 GB to 0.42 GB compressed (−76%), which is what is pulled over the network.
+- Almost all of the saving is in the dependency layer (2.96 → 1.67 GB): the GPU/CUDA build of TensorFlow and the pip cache are gone.
+- The slim base removed most of the rest.</p>
+<p>The naive <code>COPY . .</code> before <code>pip install</code> also means <em>any</em> code change re-runs the 17-minute install. The optimised order rebuilds in seconds.</p>
 <h2>6.5 Operations and troubleshooting</h2>
-<p>⏳ <em>Screenshots for start/stop/restart/logs/exec in both services (RUNBOOK §6.5).</em></p>
+<p>The everyday commands are <code>docker compose stop / start / restart web / logs --tail 30 &lt;svc&gt; / exec &lt;svc&gt; sh</code>. The listings for them are in RUNBOOK §6.5 (Figures 6.5c–f).</p>
+<p><figure><img src="img/6.5_ops_a.png"><figcaption>Figure 6.5c – stop (both services Exited), start (db Healthy first), restart web, logs of web</figcaption></figure>
+<figure><img src="img/6.5_ops_b.png"><figcaption>Figure 6.5d – logs of db: clean shutdown, then &quot;database system is ready&quot; on start; shell into web</figcaption></figure>
+<figure><img src="img/6.5_ops_c.png"><figcaption>Figure 6.5e – a shell inside each service: web runs as app and sees the mounted /models; psql inside db lists the predictions table</figcaption></figure>
+<figure><img src="img/6.5_ops_d.png"><figcaption>Figure 6.5f – both services healthy again after the restart cycle</figcaption></figure></p>
+<p>The <code>web</code> container stopped with exit code 137. Docker sends SIGTERM and, after the 10 s grace period, SIGKILL, because waitress doesn't handle SIGTERM fast enough. That is harmless here: every prediction is committed before its response is sent.</p>
 <p><strong>Deliberate failure: missing model file.</strong>
-1. I renamed <code>models/champion.keras</code> and recreated <code>web</code>. The container exited and restarted in a loop.
+1. I renamed <code>models/champion.keras</code> and recreated <code>web</code>.
+   - My first <code>docker compose logs</code> ran <strong>before</strong> the new container had printed anything, so it showed nothing (Figure 6.5a).
+   - A few seconds later the container was crash-looping (<code>Up 3 seconds</code>, restarted by <code>restart: unless-stopped</code>) and the logs showed the cause.
 2. <strong>Diagnosis, from the logs only</strong> (<code>docker compose logs web</code>):</p>
-<p><code>⏳ FileNotFoundError: model file not found at /models/champion.keras (run scripts/export_champion.py or mount the models folder)</code></p>
+<p><code>web-1  | INFO app: database ready (db:5432/visionguard)
+   web-1  | Traceback (most recent call last):
+   web-1  |   File "/srv/wsgi.py", line 18, in &lt;module&gt;
+   web-1  |     app, port = create_app(), int(os.getenv("PORT", "5000"))
+   web-1  |   File "/srv/app/__init__.py", line 21, in create_app
+   web-1  |     app.extensions["vg_predictor"] = predictor or make_predictor(cfg)            # model loaded ONCE here
+   web-1  |   File "/srv/app/predictors.py", line 11, in __init__
+   web-1  |     self._p = Predictor(cfg.MODEL_PATH, cfg.THRESHOLD)
+   web-1  |   File "/srv/serving/inference.py", line 14, in __init__
+   web-1  | FileNotFoundError: model file not found at /models/champion.keras (run scripts/export_champion.py or mount the models folder)</code></p>
 <p>The traceback ends in <code>Predictor.__init__</code>, which runs at start-up, so the problem is the mount or the file, not the code.
-3. <strong>Fix:</strong> restore the file (or re-export the champion), then <code>docker compose up -d --force-recreate web</code>. The service returned to <code>healthy</code>.</p>
+   The first line shows the database connection worked, which rules out the DB.
+3. <strong>Fix:</strong> restore the file (or re-export the champion), then <code>docker compose up -d --force-recreate web</code>. The service returned to <code>healthy</code> (Figure 6.5b).</p>
+<p><figure><img src="img/6.5_break_attempt.png"><figcaption>Figure 6.5a – breaking it: model renamed, container recreated (logs not yet written)</figcaption></figure>
+<figure><img src="img/6.5_fixed.png"><figcaption>Figure 6.5b – fixed: model restored, web recreated and starting healthy</figcaption></figure></p>
 <p>I made the error message name the exact path and the command that fixes it, so that this diagnosis works from logs alone.</p>
 <hr />
 <h2>6.6 Tool lab: GitHub Actions (CI)</h2>
@@ -1143,91 +1245,193 @@ hr { display: none; }
 - it uses a <strong>matrix of Python 3.11 and 3.12</strong>;
 - it installs pytest and runs <code>test_calc.py</code>.</p>
 <p>I changed one assertion to make it fail (red run), then fixed it (green run).</p>
-<p>⏳ <figure><img src="img/6.6a_red.png"><figcaption>Figure 6.6a – red toy run</figcaption></figure> ⏳ <figure><img src="img/6.6b_green.png"><figcaption>Figure 6.6b – green toy run</figcaption></figure></p>
+<figure><img src="img/6.6ab_toy_runs.png"><figcaption>Figure 6.6a – toy repo Actions: green first run (matrix 3.11/3.12), red after breaking a test, green after the fix</figcaption></figure>
 <p><strong>Apply.</strong> The VisionGuard workflow (<code>.github/workflows/ci.yml</code>) has two jobs:
 - <strong><code>test</code></strong>: checkout, set up Python 3.12 with a pip cache, install <code>requirements-app.txt</code> + pytest + ruff, then <strong>lint</strong> with <code>ruff check</code> and run the <strong>tests</strong> with <code>pytest</code>.
   - The tests use a fake predictor and SQLite, so CI doesn't need TensorFlow or the model and takes about a minute.
 - <strong><code>docker</code></strong>: needs <code>test</code> to pass, then <strong>builds the Docker image</strong>, which proves the Dockerfile and requirements still work.</p>
 <p>The README shows the status badge.</p>
 <p><strong>Where workflow secrets are stored.</strong> In the repository's <strong>Settings → Secrets and variables → Actions</strong>. They are encrypted at rest, injected only at run time as <code>${{ secrets.NAME }}</code>, and masked as <code>***</code> in logs. They must never be written in the workflow file. That file is committed to Git, so everyone who can read the repository (here, the whole internet) would see the secret, and it would stay in the Git history forever even after deletion. This workflow needs no secrets at all.</p>
-<p>⏳ <figure><img src="img/6.6c_project_green.png"><figcaption>Figure 6.6c – green project run</figcaption></figure> ⏳ <figure><img src="img/6.6d_badge.png"><figcaption>Figure 6.6d – badge in README</figcaption></figure></p>
+<p><figure><img src="img/6.6c_project_green.png"><figcaption>Figure 6.6b – first VisionGuard CI run: lint, tests and Docker build all green</figcaption></figure>
+<figure><img src="img/6.6d_badge.png"><figcaption>Figure 6.6c – the CI status badge (passing) at the top of the README on GitHub</figcaption></figure></p>
 <hr />
-<h1>Chapter 7: API deployment (Google Cloud Run, pathway C)</h1>
-<p><strong>Why not Vercel.</strong>
-- Vercel's Python functions are limited to about 250 MB unzipped, and TensorFlow alone is bigger, so the model can't run there.
-- Functions also have no persistent disk (SQLite would vanish) and short time limits.</p>
-<p><strong>Why Cloud Run.</strong> It runs any container:
-- 2 GiB memory;
-- HTTPS by default;
-- scales to zero when idle;
-- the free tier (2 M requests and 360k GiB-seconds per month) covers this project.</p>
-<p><strong>Mapping the Compose elements to Google Cloud:</strong></p>
+<h1>Chapter 7: API deployment (Vercel)</h1>
+<h2>7.1 Choosing the platform</h2>
+<p>I tried three platforms before settling on Vercel:
+- <strong>Google Cloud Run</strong> needs a billing account even for free-tier use. I created the project <code>l230518-a2-ops</code> (Figure 7.1a), but Google rejected my payment card, a SadaPay virtual card included (<code>OR_BACR2_31</code>, Figure 7.1b).
+- <strong>Azure for Students</strong> needs only a university email, but sign-in failed because of a problem with my university account password.
+- <strong>Vercel</strong> (the Hobby plan, signed in with GitHub, no card) is named in the assignment. It hosts the model API; Flask and the database stay on localhost, as Task 7 asks.</p>
+<p><figure><img src="img/7_gcp_project.png"><figcaption>Figure 7.1a – GCP project l230518-a2-ops</figcaption></figure>
+<figure><img src="img/7_gcp_billing_error.png"><figcaption>Figure 7.1b – billing rejected</figcaption></figure></p>
+<p><strong>The obstacle: Vercel can't run TensorFlow.</strong> A Python function there is limited to about 250 MB once unzipped, and <code>tensorflow-cpu</code> alone is larger. There is also no persistent disk and a <strong>4.5 MB request-body limit</strong>.</p>
+<p><strong>The solution: serve a TFLite copy of the champion.</strong>
+- <code>scripts/export_tflite.py</code> exports <code>champion.keras</code> to a SavedModel and converts it with <code>TFLiteConverter</code> to <code>champion.tflite</code>. It stays float32 (no quantisation) to keep accuracy identical, and is 8.9 MB.
+- The <code>[-1, 1]</code> <code>preprocess_input</code> op is part of the converted graph.
+- The function runs it with Google's <strong>LiteRT</strong> runtime (<code>ai-edge-litert</code>, about 60 MB unzipped). The whole function comes to roughly 130 MB.
+- <code>serving/lite.py::decode_resize_np</code> replaces TF preprocessing with Pillow decoding plus a NumPy port of <code>tf.image.resize</code>'s bilinear kernel (half-pixel centres, no antialiasing).</p>
+<h2>7.2 Checking that the cloud model gives the same answers</h2>
+<p>Changing the runtime and the preprocessing is a deliberate change to the serving path. That is exactly where training/serving skew (4.1) comes from, so I measured it before deploying. <code>scripts/check_tflite_parity.py</code> compares, on all 146 test images (<code>reports/tflite_parity.csv</code>):</p>
 <table>
 <thead>
 <tr>
-<th>Compose element</th>
-<th>Cloud equivalent</th>
+<th>Comparison</th>
+<th>max abs Δp(AI)</th>
+<th>mean abs Δp</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>build:</code> / image</td>
-<td>image pushed to <strong>Artifact Registry</strong> (<code>us-central1-docker.pkg.dev/l230518-a2-ops/l230518-a2-ops/api</code>)</td>
+<td>Keras vs TFLite, <strong>same</strong> TF preprocessing (conversion only)</td>
+<td>3.1 × 10⁻⁶</td>
+<td>5.3 × 10⁻⁷</td>
 </tr>
 <tr>
-<td>service container</td>
-<td><strong>Cloud Run service</strong> <code>l230518-a2-ops-api</code></td>
+<td>Keras + TF preprocessing vs TFLite + NumPy preprocessing (what Vercel computes)</td>
+<td>3.6 × 10⁻²</td>
+<td>4.9 × 10⁻³</td>
 </tr>
 <tr>
-<td><code>environment:</code> / <code>.env</code></td>
-<td><code>--set-env-vars</code> (key, threshold)</td>
-</tr>
-<tr>
-<td><code>ports: 5000:5000</code></td>
-<td>Cloud Run's HTTPS URL → container <code>$PORT</code> 8080</td>
-</tr>
-<tr>
-<td><code>HEALTHCHECK</code> / <code>/health</code></td>
-<td>Cloud Run startup probe on the port + <code>/health</code></td>
-</tr>
-<tr>
-<td><code>restart: unless-stopped</code></td>
-<td>Cloud Run restarts failed instances automatically</td>
-</tr>
-<tr>
-<td><code>db</code> + <code>pgdata</code> volume</td>
-<td>stays on localhost with the Flask app (Task 7: Flask runs locally)</td>
+<td><strong>Same decision at t = 0.771</strong></td>
+<td><strong>146 / 146</strong></td>
+<td></td>
 </tr>
 </tbody>
 </table>
-<p><strong>Model API</strong> (<code>api/main.py</code>):
-- <strong><code>POST /predict</code></strong> takes a multipart field <code>image</code> and the header <code>X-API-Key</code>.
-  - The key is compared with <code>hmac.compare_digest</code>, so the comparison takes constant time.
-  - It uses the same validation and <code>Predictor</code> as the web app, and returns JSON.
-- <strong><code>GET /health</code></strong> is public.
-- The API <strong>refuses to start without <code>MODEL_API_KEY</code></strong>, so it can never run unprotected by mistake.</p>
-<p><strong>Model delivery.</strong> <code>Dockerfile.api</code> <strong>builds the champion model into the image</strong>. Cloud Run has no host folder to mount, and a baked image is an immutable, versioned unit (tag <code>api:v2</code> = registry version 2). Serving still never calls DagsHub.</p>
-<p><strong>Step-by-step deployment</strong> (commands in RUNBOOK §7):
-1. Create the GCP project <code>l230518-a2-ops</code> and link billing. ⏳ <em>Figure 7a</em>
-2. <code>gcloud auth login</code>, then <code>gcloud config set project l230518-a2-ops</code>.
-3. <code>gcloud services enable run.googleapis.com artifactregistry.googleapis.com</code>.
-4. Create the Docker repository: <code>gcloud artifacts repositories create l230518-a2-ops --repository-format=docker --location=us-central1</code>.
-5. <code>gcloud auth configure-docker us-central1-docker.pkg.dev</code>, so Docker can push to it.
-6. <code>python -m scripts.export_champion</code>, so <code>models/champion.keras</code> is the registry champion.
-7. Build and push: <code>docker build -f Dockerfile.api -t …/api:v2 .</code> then <code>docker push …/api:v2</code>. ⏳ <em>Figure 7b</em>
-8. Deploy with <code>gcloud run deploy l230518-a2-ops-api --image …/api:v2 --region us-central1 --memory 2Gi --cpu 1 --cpu-boost --timeout 120 --min-instances 0 --max-instances 1 --allow-unauthenticated --set-env-vars MODEL_API_KEY=…,THRESHOLD=0.771</code>. ⏳ <em>Figure 7c, which shows the service URL.</em>
-   - <code>--max-instances 1</code> caps cost.
-   - <code>--cpu-boost</code> shortens the cold start, while the model loads.
-   - <code>--allow-unauthenticated</code> only makes the URL reachable; <code>/predict</code> still requires the API key.
-9. Check the service page and logs in the console. ⏳ <em>Figures 7d, 7e</em></p>
-<p><strong>API URL:</strong> ⏳ <code>https://l230518-a2-ops-api-….run.app</code> (endpoints <code>/health</code>, <code>/predict</code>).</p>
-<p><strong>Postman test from another network</strong> (mobile hotspot):
-- <code>POST /predict</code>, header <code>X-API-Key</code>, form-data <code>image</code> → 200 with JSON. ⏳ <em>Figure 7f</em>
-- The same call without the key → 401 <code>missing or invalid X-API-Key</code>. ⏳ <em>Figure 7g</em>
-- A <code>.txt</code> file → 400. ⏳ <em>Figure 7h</em></p>
-<p><strong>What went wrong / limits.</strong>
-- The first request after idle is a <strong>cold start</strong>: the container starts and loads TF and the model, which takes about 10–20 s. Later requests take well under a second.
-- The free tier would normally keep one warm instance with <code>--min-instances 1</code>, but that costs money, so I accepted cold starts.</p>
+<p>The conversion is exact. The remaining gap comes from preprocessing, and I traced it to the JPEG decoder rather than my resize code:
+- Decoding with TF and resizing with my NumPy code differs from <code>tf.image.resize</code> by at most 0.04 pixel levels, which is rounding.
+- <code>tf.io.decode_image</code> defaults to libjpeg's <strong>fast integer DCT</strong>, and Pillow uses the <strong>accurate</strong> one. Their pixels differ by up to 20/255.
+- With <code>dct_method="INTEGER_ACCURATE"</code>, TF matches Pillow <strong>exactly</strong>.</p>
+<p>Both decoders are valid, and Pillow has no option for TF's fast mode. Because the effect is small (mean Δp 0.005) and never flips a decision on the test set, I accepted it and documented it, instead of shipping TensorFlow just to decode JPEGs.</p>
+<figure><img src="img/7a_parity.png"><figcaption>Figure 7.2 – parity check output</figcaption></figure>
+<h2>7.3 The model API</h2>
+<p>The Vercel function uses the same <code>api/main.py</code> as the container version. Only <code>MODEL_PATH</code> (<code>.tflite</code> vs <code>.keras</code>) selects the runtime.</p>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /health</code></td>
+<td>public: <code>{"status":"ok","model_name":"L230518_A2_Ops_VisionGuard","model_version":"2","threshold":0.771}</code></td>
+</tr>
+<tr>
+<td><code>POST /predict</code></td>
+<td>header <code>X-API-Key</code> and multipart field <code>image</code>. Returns <code>{label, p_ai, confidence, threshold, model_version, latency_ms, filename, sha256}</code>; 401 without a valid key, 400 for wrong or undecodable files, 413 over 4 MB</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Protection.</strong>
+- The key is checked with <code>hmac.compare_digest</code>, a constant-time comparison.
+- It is stored as an <strong>encrypted Vercel environment variable</strong> (<code>vercel env add</code>), piped in from my untracked <code>.env</code>, so it is in no file and no commit.
+- The API <strong>refuses to start without a key</strong>.</p>
+<p><strong>Model delivery.</strong> The TFLite file is bundled into the deployment, built from the registry champion via <code>export_champion.py</code> and then <code>export_tflite.py</code>. It loads <strong>once per function instance</strong>, in about 1 s instead of 37 s for Keras. Serving never calls DagsHub.</p>
+<p><strong>Mapping the Compose elements to Vercel:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Compose element</th>
+<th>Vercel equivalent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>image / <code>build:</code></td>
+<td>Vercel builds the function from <code>deploy/vercel</code> (<code>requirements.txt</code> without TF + <code>app.py</code>, Flask framework preset)</td>
+</tr>
+<tr>
+<td>service container</td>
+<td>serverless function from <code>app.py</code> (WSGI <code>app</code>); the Flask preset routes every path to it</td>
+</tr>
+<tr>
+<td><code>environment:</code> / <code>.env</code></td>
+<td>project environment variables (encrypted <code>MODEL_API_KEY</code>; defaults for threshold and limit)</td>
+</tr>
+<tr>
+<td><code>ports:</code></td>
+<td>HTTPS domain <code>l230518-a2-ops-api.vercel.app</code></td>
+</tr>
+<tr>
+<td><code>HEALTHCHECK</code></td>
+<td><code>/health</code>, plus Vercel's own deployment status</td>
+</tr>
+<tr>
+<td>volume for the model</td>
+<td>model bundled into the deployment (<code>includeFiles</code>)</td>
+</tr>
+<tr>
+<td><code>db</code> + <code>pgdata</code></td>
+<td>stays on localhost with Flask (Vercel has no persistent disk)</td>
+</tr>
+</tbody>
+</table>
+<h2>7.4 Deployment, step by step</h2>
+<p>The commands are in RUNBOOK §7a.
+1. Sign up on Vercel with GitHub, then run <code>npx vercel login</code>.
+2. <code>python -m scripts.export_tflite</code>, then <code>python -m scripts.check_tflite_parity</code>.
+3. <code>python -m scripts.build_vercel</code>. It copies <code>serving/</code>, <code>api/main.py</code> (as <code>api_core/</code>) and the model into <code>deploy/vercel/</code>.
+4. In <code>deploy/vercel</code>, run <code>npx vercel link --project l230518-a2-ops-api</code>.
+5. <code>npx vercel env add MODEL_API_KEY production</code>, with the value piped from <code>.env</code>.
+6. <code>npx vercel deploy --prod</code>. The build takes about 50 s and the public alias is <code>l230518-a2-ops-api.vercel.app</code> (Figure 7.4a).
+7. Check the environment variables (Figure 7.4b) and the request logs (Figure 7.4c).</p>
+<p><figure><img src="img/7b_deploy.png"><figcaption>Figure 7.4a – production deployment ready, aliased to l230518-a2-ops-api.vercel.app</figcaption></figure>
+<figure><img src="img/7d_env.png"><figcaption>Figure 7.4b – MODEL_API_KEY stored as an encrypted production variable</figcaption></figure>
+<figure><img src="img/8d_vercel_logs.png"><figcaption>Figure 7.4c – Vercel request logs: /health and /predict calls from my Flask app, all 200</figcaption></figure></p>
+<p><strong>API URL:</strong> <strong>https://l230518-a2-ops-api.vercel.app</strong> (<code>/health</code>, <code>/predict</code>).</p>
+<p>Responses from the deployed API, called with curl:</p>
+<pre><code>GET  /health                     200 {&quot;model_name&quot;:&quot;L230518_A2_Ops_VisionGuard&quot;,&quot;model_version&quot;:&quot;2&quot;,&quot;status&quot;:&quot;ok&quot;,&quot;threshold&quot;:0.771}
+POST /predict  (key, AI image)   200 {&quot;label&quot;:&quot;AI-generated&quot;,&quot;p_ai&quot;:0.9994,&quot;confidence&quot;:0.9994,&quot;latency_ms&quot;:68.5,...}
+POST /predict  (key, real photo) 200 {&quot;label&quot;:&quot;Real&quot;,&quot;p_ai&quot;:0.0468,&quot;confidence&quot;:0.9532,&quot;latency_ms&quot;:443.3,...}
+POST /predict  (no key)          401 {&quot;error&quot;:&quot;missing or invalid X-API-Key&quot;}
+POST /predict  (key, .txt)       400 {&quot;error&quot;:&quot;Unsupported file type '.txt'. Please upload a JPG or PNG image.&quot;}
+</code></pre>
+<p><strong>Postman test from another network.</strong> I switched my laptop from home Wi-Fi to <strong>mobile data</strong>, so the requests came from a different network, then called the API from Postman:</p>
+<p><figure><img src="img/7f_postman_ok.png"><figcaption>Figure 7.4d – POST /predict with the key and an AI image: 200 OK, label AI-generated, p(AI) 0.803, model v2</figcaption></figure>
+<figure><img src="img/7g_postman_401.png"><figcaption>Figure 7.4e – the same request with an empty X-API-Key: 401 Unauthorized</figcaption></figure>
+<figure><img src="img/7h_postman_400.png"><figcaption>Figure 7.4f – a .txt file with a valid key: 400 Bad Request, &quot;Unsupported file type&quot;</figcaption></figure></p>
+<p>My first Postman call returned <strong>404</strong> (Figure 7.4g). The URL I had pasted ended in an invisible line break (the <code>↵</code> after <code>predict</code>), so Postman requested <code>/predict%0A</code>. I reproduced it with curl: the clean URL answers normally, while <code>/predict%0A</code> returns exactly that 404. Retyping the URL fixed it.</p>
+<figure><img src="img/7_postman_404_newline.png"><figcaption>Figure 7.4g – the 404 caused by a pasted line break at the end of the URL</figcaption></figure>
+<h2>7.5 Limits and what went wrong</h2>
+<ul>
+<li><strong>Two failed providers.</strong> Google billing and Azure sign-in both failed. Because the API is an ordinary Flask app configured only through environment variables, moving between providers changed no application code.</li>
+<li><strong>Upload limit.</strong> Vercel's 4.5 MB body limit forced the API limit down to 4 MB. In remote mode the web app also uses <code>MAX_UPLOAD_MB=4</code>, so users get the friendly 413 page locally instead of an opaque error from Vercel.</li>
+<li><strong>Routing bug on the first deploy</strong> (Figure 7.5). I first used an <code>api/index.py</code> function with a <code>vercel.json</code> rewrite of <code>/(.*)</code> to <code>/api/index</code>. Every call returned Flask's 404, <code>/health</code> included. The Vercel logs showed <code>requestPath: /health</code>, while Flask itself received <code>GET /api/index</code>, because the rewrite replaces the path the WSGI app sees. I switched to Vercel's Flask framework preset (<code>app.py</code> at the root, no rewrites), which forwards the original path.</li>
+</ul>
+<figure><img src="img/7_bug_404.png"><figcaption>Figure 7.5 – first deploy: every path answered with Flask's 404</figcaption></figure>
+<ul>
+<li><strong>Cold starts.</strong> The first request after idle starts a new function instance and loads the model (about 1–3 s).</li>
+<li><strong>Different runtime.</strong> The deployed model is the TFLite conversion, not the <code>.keras</code> file. The parity check in 7.2 is the evidence that it makes the same decisions.</li>
+</ul>
+<h2>7.6 Alternative: Azure Container Apps (full TensorFlow container)</h2>
+<p><code>Dockerfile.api</code> packages the same API with full TensorFlow and the Keras model built in, for container platforms. RUNBOOK §7b has the Azure Container Apps commands (<code>az acr build</code>, then <code>az containerapp create</code> with <code>--secrets</code> and <code>secretref:</code>). If I regain access to my Azure for Students account before submission, I will deploy there too. Switching the Flask app over only means changing <code>MODEL_API_URL</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Compose element</th>
+<th>Azure equivalent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>image</td>
+<td>Azure Container Registry <code>l230518a2ops</code>, image <code>api:v2</code></td>
+</tr>
+<tr>
+<td>service</td>
+<td>Container App <code>l230518-a2-ops-api</code> (1 vCPU, 2 GiB, 0–1 replicas)</td>
+</tr>
+<tr>
+<td><code>.env</code></td>
+<td><code>--env-vars</code> + Container Apps secret for <code>MODEL_API_KEY</code></td>
+</tr>
+<tr>
+<td><code>ports:</code></td>
+<td>external HTTPS ingress → target port 8080</td>
+</tr>
+</tbody>
+</table>
 <hr />
 <h1>Chapter 8: Integrating Flask and the API</h1>
 <p><strong>How it works.</strong>
@@ -1242,11 +1446,22 @@ hr { display: none; }
 - The same web code runs both ways; only environment variables change.
 - The heavy model runs in the cloud.
 - The database and the UI stay local, as the task asks.</p>
-<p><strong>Demonstration.</strong> ⏳ <em>Screenshots, captured after deployment:</em>
-- <code>/health</code> in remote mode;
-- 5 or more different uploads: AI, real, PNG, and a wrong file;
-- the History page showing <strong>Served by: cloud API</strong>;
-- the matching Cloud Run log lines with the same SHA-256 prefixes.</p>
+<p><strong>Demonstration.</strong>
+1. I set <code>INFERENCE_MODE=remote</code> and <code>MODEL_API_URL=https://l230518-a2-ops-api.vercel.app</code> in <code>.env</code>, then ran <code>docker compose up -d --force-recreate web</code>.
+2. My first <code>curl /health</code> came back "Empty reply from server" (Figure 8.1). That was simply too early, because waitress was not listening yet.
+3. Once the container was healthy, <code>/health</code> reported <code>inference_mode: remote</code> and <code>model_api_status: ok</code> (Figure 8.2).</p>
+<p><figure><img src="img/8_curl_early.png"><figcaption>Figure 8.1 – curl before the web container finished starting</figcaption></figure>
+<figure><img src="img/8a_health_remote.png"><figcaption>Figure 8.2 – health check in remote mode: database ok, cloud model API ok, model v2</figcaption></figure></p>
+<p>I then uploaded six different images through the local UI (rows 5–10). Each one was sent to Vercel, classified, and logged in Postgres with <code>mode=remote</code>:</p>
+<p><figure><img src="img/8b_result_real.png"><figcaption>Figure 8.3 – result served by the cloud API: real photo, p(AI) = 0.151, 42 ms</figcaption></figure>
+<figure><img src="img/8b_result_ai.png"><figcaption>Figure 8.4 – result served by the cloud API: AI image (PNG), p(AI) = 0.803, 23 ms</figcaption></figure>
+<figure><img src="img/8c_history.png"><figcaption>Figure 8.5 – history: rows 1–4 by the local model, rows 5–10 by the cloud API</figcaption></figure></p>
+<p><strong>What the history shows:</strong>
+- The same image was classified both ways. <code>0nglsAEPlxapCcJZA.jpeg</code> got 0.973 locally (row 1) and 0.973 in the cloud (row 6). <code>1jWx9suY2k3Ifq4B8A_vz9g.jpeg</code> got 0.149 vs 0.151 (rows 3 and 9). This is the TFLite parity from 7.2, confirmed on new images.
+- Cloud predictions take 23–57 ms of model time, against 0.3–1.6 s locally, where Keras runs on my laptop CPU.
+- The matching <code>/predict</code> calls appear in the Vercel request logs (Figure 7.4c).</p>
+<p>A wrong file in remote mode gets the same friendly 400 page (Figure 8.6). Validation runs locally <em>before</em> anything is sent to the cloud, so invalid uploads never cost an API call.</p>
+<figure><img src="img/8e_remote_wrong_type.png"><figcaption>Figure 8.6 – remote mode: a .txt upload is rejected locally</figcaption></figure>
 <hr />
 <h1>Chapter 9: Summary and what I learned</h1>
 <table>
@@ -1279,15 +1494,15 @@ hr { display: none; }
 </tr>
 <tr>
 <td>6 Docker / Compose / CI</td>
-<td>✔ ⏳ screenshots</td>
+<td>✔</td>
 </tr>
 <tr>
-<td>7 Cloud API</td>
-<td>⏳</td>
+<td>7 Cloud API (Vercel, TFLite)</td>
+<td>✔</td>
 </tr>
 <tr>
 <td>8 Integration</td>
-<td>⏳</td>
+<td>✔</td>
 </tr>
 </tbody>
 </table>

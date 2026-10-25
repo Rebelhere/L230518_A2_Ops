@@ -69,3 +69,11 @@ def test_api_requires_key():
                  headers={"X-API-Key": "secret"}, content_type="multipart/form-data")
     assert r.status_code == 200 and r.json["label"] == "AI-generated"
     assert api.get("/health").json["status"] == "ok"
+    assert "/predict" in str(api.get("/").json["endpoints"])
+
+@pytest.mark.parametrize("mode,fmt", [("RGBA", "PNG"), ("L", "JPEG"), ("P", "PNG")])
+def test_numpy_preprocessing_shape(mode, fmt):
+    from serving.lite import decode_resize_np
+    buf = io.BytesIO(); Image.new(mode, (301, 177)).save(buf, fmt)
+    x = decode_resize_np(buf.getvalue())
+    assert x.shape == (224, 224, 3) and x.dtype.name == "float32"

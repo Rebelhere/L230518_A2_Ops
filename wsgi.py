@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from waitress import serve
 
 if __name__ == "__main__":
-    load_dotenv()                                   # no-op in Docker, where env comes from compose / Cloud Run
+    load_dotenv()                                   # no-op in Docker, where env comes from compose / Azure
     which = sys.argv[1] if len(sys.argv) > 1 else "web"
     if which == "api":
         from api.main import create_api

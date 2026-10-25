@@ -1,5 +1,5 @@
-# Model API for the cloud (Google Cloud Run). Same base as the web image, but the champion model is
-# BUILT IN: Cloud Run has no host folder to mount, and a baked image is an immutable, versioned artifact.
+# Model API for the cloud (Azure Container Apps). Same base as the web image, but the champion model is
+# BUILT IN: a Container App has no host folder to mount, and a baked image is an immutable, versioned artifact.
 # Run scripts/export_champion.py first so models/champion.keras is the registry's @champion.
 FROM python:3.12-slim
 

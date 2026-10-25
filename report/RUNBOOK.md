@@ -126,53 +126,125 @@ cd ..\L230518_A2_Ops
 
 ---
 
-## 7 Model API on Google Cloud Run
+## 7a Model API on Vercel (deployed pathway)
 
-One-time setup:
-1. Install the gcloud CLI: https://cloud.google.com/sdk/docs/install
-2. In the console, create the project **`l230518-a2-ops`**. GCP IDs must be lowercase with hyphens. → `7a_project.png`
-3. Link a billing account. The free tier covers this, and the limits below cap the cost.
+Full TensorFlow doesn't fit in a Vercel function (about 250 MB limit). Vercel therefore serves a **TFLite** copy of the champion model with the small **LiteRT** runtime. The API code is the same `api/main.py`.
+
+**One-time setup:** sign up at https://vercel.com/signup with **Continue with GitHub**. No card is needed.
 
 ```powershell
-gcloud auth login
-gcloud config set project l230518-a2-ops
-gcloud services enable run.googleapis.com artifactregistry.googleapis.com
-gcloud artifacts repositories create l230518-a2-ops --repository-format=docker --location=us-central1
-gcloud auth configure-docker us-central1-docker.pkg.dev
-
-# build the API image with the champion model baked in, and push it
-docker build -f Dockerfile.api -t us-central1-docker.pkg.dev/l230518-a2-ops/l230518-a2-ops/api:v2 .
-docker push us-central1-docker.pkg.dev/l230518-a2-ops/l230518-a2-ops/api:v2            # 7b_push.png
-
-# test the same image locally first
-docker run --rm -p 8080:8080 -e MODEL_API_KEY=localtest us-central1-docker.pkg.dev/l230518-a2-ops/l230518-a2-ops/api:v2
-
-# deploy; the key comes from .env and is never typed into a file
-$KEY = (Select-String '^MODEL_API_KEY=' .env).Line.Split('=',2)[1]
-gcloud run deploy l230518-a2-ops-api `
-  --image us-central1-docker.pkg.dev/l230518-a2-ops/l230518-a2-ops/api:v2 `
-  --region us-central1 --memory 2Gi --cpu 1 --cpu-boost --timeout 120 `
-  --min-instances 0 --max-instances 1 --allow-unauthenticated `
-  --set-env-vars "MODEL_API_KEY=$KEY,THRESHOLD=0.771"                                   # 7c_deploy.png (shows Service URL)
+npx vercel login                                 # opens the browser; approve
+python -m scripts.export_champion                # models/champion.keras = registry @champion (if not done)
+python -m scripts.export_tflite                  # -> models/champion.tflite
+python -m scripts.check_tflite_parity            # SCREENSHOT 7a_parity.png  (146/146 same decision)
+python -m scripts.build_vercel                   # copies code + model into deploy/vercel
+cd deploy\vercel
+npx vercel link --yes --project l230518-a2-ops-api
+# API key from ..\..\.env into Vercel's encrypted env store (never into a file):
+(Select-String '^MODEL_API_KEY=' ..\..\.env).Line.Split('=',2)[1] | npx vercel env add MODEL_API_KEY production
+npx vercel deploy --prod                         # SCREENSHOT 7b_deploy.png -> prints https://l230518-a2-ops-api.vercel.app
+cd ..\..
+curl.exe https://l230518-a2-ops-api.vercel.app/health
 ```
 
-`--allow-unauthenticated` only makes the URL reachable. Every `/predict` call still needs the `X-API-Key` header, and without it the API returns 401.
-
 Screenshots to take:
-- `7d_console.png`: the Cloud Run console page for the service, showing the URL, the revision and a green tick.
-- `7e_logs.png`: the Logs tab after a few calls, showing the `predict ... p_ai=` lines.
+- `7c_dashboard.png`: the Vercel dashboard for the project, showing the production deployment, the domain and the "Ready" status.
+- `7d_env.png`: Settings → Environment Variables, showing `MODEL_API_KEY` (encrypted, value hidden).
+- `7e_logs.png`: the deployment's **Logs** tab after a few calls, showing the `predict ... p_ai=` lines.
 
 **Postman.** Do this from your phone's hotspot, so the call comes from another network.
-- `POST https://<service-url>/predict`
+- `POST https://l230518-a2-ops-api.vercel.app/predict`
 - Headers: `X-API-Key: <key>`
 - Body: form-data, key `image` (type File)
 - Screenshots: `7f_postman_ok.png` (200 + JSON), `7g_postman_401.png` (same call without the header), `7h_postman_400.png` (a .txt file).
 
 ---
 
+## 7b Azure Container Apps (optional, later: full TensorFlow container)
+
+Google Cloud Run was the first plan. Google needs a billing account, and it rejected my payment card, including a SadaPay virtual card (error `OR_BACR2_31`). Azure for Students needs only the university email and gives $100 of credit, with no card.
+
+**One-time setup**
+
+1. Activate https://azure.microsoft.com/free/students with your FAST NU email. → `7a_azure_students.png` (credit page)
+2. Install the Azure CLI: https://aka.ms/installazurecliwindows. Then open a new PowerShell window.
+
+**Sign in and create the resources**
+
+```powershell
+az login
+az account show --query "{name:name, id:id}"          # "Azure for Students"
+az extension add --name containerapp --upgrade
+az provider register --namespace Microsoft.App
+az provider register --namespace Microsoft.OperationalInsights
+az provider register --namespace Microsoft.ContainerRegistry
+
+# resource group (names may contain _), in a region your student subscription allows
+az group create -n L230518_A2_Ops -l eastus
+# container registry (name: lowercase letters and digits only)
+az acr create -g L230518_A2_Ops -n l230518a2ops --sku Basic --admin-enabled true
+```
+
+If `eastus` is refused with `RequestDisallowedByAzure`, student subscriptions only allow certain regions. The error message lists them. Use one of those (for example `centralindia` or `uaenorth`) everywhere below.
+
+**Build the API image in Azure**
+
+The image has the champion model built in. `az acr build` uploads only the build context: the code plus the 17 MB model, after `.dockerignore`. Azure's servers then download TensorFlow and build the image.
+
+```powershell
+python -m scripts.export_champion                      # models/champion.keras = registry @champion
+az acr build -r l230518a2ops -t api:v2 -f Dockerfile.api .      # 7b_acr_build.png
+```
+
+If you get `TasksOperationsNotAllowed`, the subscription doesn't allow cloud builds. Build and push from your PC instead (slow):
+
+```powershell
+az acr login -n l230518a2ops
+docker build -f Dockerfile.api -t l230518a2ops.azurecr.io/api:v2 .
+docker push l230518a2ops.azurecr.io/api:v2
+```
+
+**Deploy**
+
+The API key comes from `.env` and is stored as a Container Apps *secret*. It never appears in a file or in the image.
+
+```powershell
+$KEY = (Select-String '^MODEL_API_KEY=' .env).Line.Split('=',2)[1]
+az containerapp env create -g L230518_A2_Ops -n l230518-a2-ops-env -l eastus
+az containerapp create -g L230518_A2_Ops -n l230518-a2-ops-api `
+  --environment l230518-a2-ops-env `
+  --image l230518a2ops.azurecr.io/api:v2 --registry-server l230518a2ops.azurecr.io `
+  --target-port 8080 --ingress external `
+  --cpu 1 --memory 2Gi --min-replicas 0 --max-replicas 1 `
+  --secrets api-key=$KEY `
+  --env-vars MODEL_API_KEY=secretref:api-key THRESHOLD=0.771 `
+  --query properties.configuration.ingress.fqdn          # 7c_deploy.png -> prints the API host name
+
+curl.exe https://<fqdn>/health                           # {"status":"ok","model_version":"2",...}
+```
+
+Screenshots to take:
+- `7d_portal.png`: the Azure portal page for the Container App, showing the Application Url, "Running" status and the replica settings.
+- `7e_logs.png`: the portal's **Log stream**, or `az containerapp logs show -g L230518_A2_Ops -n l230518-a2-ops-api --follow`, showing the `predict ... p_ai=` lines after a few calls.
+
+**Postman.** Do this from your phone's hotspot, so the call comes from another network.
+- `POST https://<fqdn>/predict`
+- Headers: `X-API-Key: <key>`
+- Body: form-data, key `image` (type File)
+- Screenshots: `7f_postman_ok.png` (200 + JSON), `7g_postman_401.png` (same call without the header), `7h_postman_400.png` (a .txt file).
+
+**Saving credit when you're done grading:**
+
+```powershell
+az containerapp update -g L230518_A2_Ops -n l230518-a2-ops-api --max-replicas 0    # pause
+az group delete -n L230518_A2_Ops                                                  # delete everything at the end
+```
+
+---
+
 ## 8 Flask (localhost) calling the cloud API
 
-In `.env`, set `INFERENCE_MODE=remote` and `MODEL_API_URL=https://<service-url>`. Then:
+In `.env`, set `INFERENCE_MODE=remote` and `MODEL_API_URL=https://l230518-a2-ops-api.vercel.app` and `MAX_UPLOAD_MB=4`. Then:
 
 ```powershell
 docker compose up -d --force-recreate web
@@ -182,4 +254,4 @@ curl.exe http://localhost:5000/health        # model_api_status: ok   -> 8a_heal
 Upload 5 or more different images: AI, real, a PNG, and one wrong file. Then take:
 - `8b_result_*.png`: each result page;
 - `8c_history.png`: the History page, with the "Served by: cloud API" column;
-- `8d_cloudrun_logs.png`: the matching Cloud Run log lines.
+- `8d_cloudrun_logs.png`: the matching Vercel log lines.

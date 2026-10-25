@@ -16,9 +16,19 @@ def create_api(predictor=None, api_key=None):
     if not key:
         raise RuntimeError("MODEL_API_KEY is not set; refusing to start an unprotected model API")
     if predictor is None:
-        from serving.inference import Predictor
-        predictor = Predictor(os.getenv("MODEL_PATH", "models/champion.keras"), os.getenv("THRESHOLD", "0.771"))
+        path, thr = os.getenv("MODEL_PATH", "models/champion.keras"), os.getenv("THRESHOLD", "0.771")
+        if path.endswith(".tflite"):                     # Vercel: TFLite + LiteRT, no TensorFlow
+            from serving.lite import LitePredictor
+            predictor = LitePredictor(path, thr)
+        else:                                            # container (Docker / Azure): full Keras model
+            from serving.inference import Predictor
+            predictor = Predictor(path, thr)
     api.logger.info("model %s v%s loaded, threshold %.3f", predictor.name, predictor.version, predictor.threshold)
+
+    @api.get("/")
+    def index():
+        return jsonify(service="VisionGuard model API (L230518_A2_Ops)", model_version=str(predictor.version),
+                       endpoints={"GET /health": "status", "POST /predict": "multipart 'image' + header X-API-Key"})
 
     @api.get("/health")
     def health():

@@ -4,7 +4,7 @@
 
 VisionGuard tells whether an uploaded image is **AI-generated or real**. A MobileNetV2 model fine-tuned with
 TensorFlow/Keras is tracked with MLflow on DagsHub, served by Flask, logged to PostgreSQL, containerised with
-Docker Compose, and its model API runs on Google Cloud Run.
+Docker Compose, and its model API (TFLite) runs on Vercel.
 
 - DagsHub (data, experiments, model registry): https://dagshub.com/Rebelhere/L230518_A2_Ops
 - Registered model: `L230518_A2_Ops_VisionGuard`, alias `@champion`

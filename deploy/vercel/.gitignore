@@ -1,0 +1,9 @@
+# build output of scripts/build_vercel.py
+serving/
+api_core/
+models/
+.vercel
+__pycache__/
+
+.vercel
+.env*
