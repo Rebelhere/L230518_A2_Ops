@@ -1,0 +1,1299 @@
+<!doctype html><meta charset="utf-8"><title>VisionGuard: AI vs Real Image Classification and Deployment</title><style>
+@page { size: A4; margin: 16mm 15mm; }
+body { font: 10.5pt/1.45 "Segoe UI", Calibri, sans-serif; color: #1d2330; }
+h1 { font-size: 17pt; border-bottom: 2px solid #3b5bdb; padding-bottom: 4px; margin-top: 26px; page-break-before: always; }
+h1.title { page-break-before: avoid; border: 0; font-size: 22pt; text-align: center; margin-top: 60px; }
+p.subtitle { text-align: center; color: #555; font-size: 13pt; }
+h2 { font-size: 13pt; color: #3b5bdb; margin-top: 18px; }
+table { border-collapse: collapse; margin: 8px 0; font-size: 9pt; page-break-inside: avoid; }
+th, td { border: 1px solid #ccd; padding: 3px 7px; vertical-align: top; }
+th { background: #eef1f8; }
+code { font: 8.8pt Consolas, monospace; background: #f3f4f6; padding: 0 3px; }
+pre { background: #f3f4f6; padding: 8px; font-size: 8.5pt; white-space: pre-wrap; page-break-inside: avoid; }
+figure { margin: 10px 0; text-align: center; page-break-inside: avoid; }
+figure img { max-width: 100%; max-height: 120mm; border: 1px solid #ddd; }
+figcaption { font-size: 9pt; color: #444; font-style: italic; margin-top: 3px; }
+hr { display: none; }
+</style><h1 class="title">VisionGuard: AI vs Real Image Classification and Deployment</h1><p class="subtitle">MLOps Assignment 2 · L230518_A2_Ops</p><h1>Front matter</h1>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Name</strong></td>
+<td>⏳ <em>your full name</em></td>
+</tr>
+<tr>
+<td><strong>Roll number</strong></td>
+<td>L230518</td>
+</tr>
+<tr>
+<td><strong>Project name</strong></td>
+<td>L230518_A2_Ops (GitHub, DagsHub, registry, GCP project and Cloud Run service)</td>
+</tr>
+<tr>
+<td><strong>GitHub</strong></td>
+<td>https://github.com/Rebelhere/L230518_A2_Ops</td>
+</tr>
+<tr>
+<td><strong>DagsHub</strong></td>
+<td>https://dagshub.com/Rebelhere/L230518_A2_Ops (data, experiments, model registry)</td>
+</tr>
+<tr>
+<td><strong>MLflow tracking</strong></td>
+<td>https://dagshub.com/Rebelhere/L230518_A2_Ops.mlflow</td>
+</tr>
+<tr>
+<td><strong>Model API (Cloud Run)</strong></td>
+<td>⏳ <code>https://l230518-a2-ops-api-….run.app</code></td>
+</tr>
+<tr>
+<td><strong>Web app</strong></td>
+<td>Runs on localhost (<code>docker compose up</code>) and calls the cloud API, as Task 7 requires</td>
+</tr>
+<tr>
+<td><strong>Graded commit</strong></td>
+<td>⏳ <code>git rev-parse HEAD</code> at submission</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Disclosure of AI assistance.</strong>
+- <strong>Claude Code (Anthropic), used as a coding assistant in VS Code.</strong> It helped me:
+  - write and debug the Flask app, model API, Dockerfiles, Compose file, CI workflow, tests and Grad-CAM script;
+  - plan the cloud deployment;
+  - draft and structure this report from my terminal output and screenshots.
+- <strong>My own work:</strong> I ran every command, training run, experiment and deployment myself. I took the screenshots and checked every number in the report against my own outputs.
+- <strong>Other sources:</strong>
+  - the official TensorFlow/Keras, MLflow, DagsHub, DVC, Docker and Google Cloud Run documentation;
+  - the Kaggle dataset page.</p>
+<hr />
+<h1>Chapter 1: Data understanding and versioning</h1>
+<h2>1.1 Environment</h2>
+<p><strong>What I did.</strong>
+- I created an isolated virtual environment (<code>python -m venv venv</code>) with Python 3.12.10 and installed TensorFlow 2.21.0, Keras 3.15.1, MLflow 3.17.2, DVC 3.67.1, DagsHub, Keras Tuner 1.4.8, pandas, scikit-learn, Pillow and Flask.
+- I froze the exact versions into <code>requirements.txt</code> (<code>pip freeze</code>).</p>
+<p><strong>Why.</strong> A venv keeps the project's dependency versions separate from other projects. Freezing the list makes the training environment reproducible.</p>
+<p><strong>Result.</strong> <code>tf.config.list_physical_devices('GPU')</code> returns <code>[]</code>. TensorFlow ≥ 2.11 has no GPU support on native Windows (it needs WSL2), so all training ran on the CPU (Figure 1.1).</p>
+<p><strong>What went wrong.</strong> <code>pip freeze &gt; requirements.txt</code> in PowerShell 5.1 writes UTF-16. Linux <code>pip</code> inside Docker can't read that, so I later re-saved the file as UTF-8.</p>
+<figure><img src="img/1.1_env_versions.png"><figcaption>Figure 1.1 – Python, TensorFlow version and GPU check</figcaption></figure>
+<h2>1.2 Dataset audit</h2>
+<p><strong>What I did.</strong> <code>scripts/audit.py</code> walks <code>data/</code>. For every file it records:
+- class (taken from the folder name);
+- file size, width, height, colour mode and format (read with Pillow);
+- SHA-256 of the file's bytes.</p>
+<p>The full table is <code>reports/audit.csv</code>. A file that fails <code>Image.open().verify()</code> counts as corrupt. Rows that share a hash are exact duplicates.</p>
+<p><strong>Results</strong> (Figures 1.2a–b):</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>AI</th>
+<th>Real</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Images</td>
+<td><strong>539</strong></td>
+<td><strong>435</strong></td>
+</tr>
+<tr>
+<td>Width min / median / max (px)</td>
+<td>225 / 1024 / 6000</td>
+<td>183 / 940 / 8495</td>
+</tr>
+<tr>
+<td>Height min / median / max (px)</td>
+<td>135 / 800 / 4001</td>
+<td>158 / 720 / 7091</td>
+</tr>
+<tr>
+<td>File size min / median / max</td>
+<td>11.7 KB / 199.8 KB / 5.6 MB</td>
+<td>11.3 KB / 145.0 KB / 10.2 MB</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Corrupt files:</strong> 0.</li>
+<li><strong>Exact duplicates:</strong> 1. I kept one copy, so the same image can't land in both train and test.</li>
+<li><strong>Colour modes:</strong> RGB 895, RGBA 49, P (palette) 23, L (greyscale) 7.</li>
+<li><strong>Formats:</strong> JPEG 831, PNG 143.</li>
+<li><strong>Split:</strong> stratified 70/15/15 with seed 42:</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Split</th>
+<th>Images</th>
+<th>AI</th>
+<th>Real</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Train</td>
+<td>681</td>
+<td>377</td>
+<td>304</td>
+</tr>
+<tr>
+<td>Validation</td>
+<td>146</td>
+<td>81</td>
+<td>65</td>
+</tr>
+<tr>
+<td>Test</td>
+<td>146</td>
+<td>80</td>
+<td>66</td>
+</tr>
+</tbody>
+</table>
+<p>The split lists are in <code>splits/*.csv</code>, with path, label and hash.</p>
+<p><strong>Interpretation.</strong>
+- The classes are mildly imbalanced (55% AI), so accuracy alone is misleading. I also report precision, recall, F1 and ROC-AUC.
+- The colour modes are mixed. The input pipeline therefore forces 3 channels, which drops alpha and expands greyscale.</p>
+<p><figure><img src="img/1.2_audit_a.png"><figcaption>Figure 1.2a – audit output: counts and size statistics</figcaption></figure>
+<figure><img src="img/1.2_audit_b.png"><figcaption>Figure 1.2b – colour modes, formats and split sizes</figcaption></figure></p>
+<h2>1.3 Visual EDA</h2>
+<figure><img src="../reports/figs/sample_grid.png"><figcaption>Figure 1.3a – random samples per class (top real, bottom AI)</figcaption></figure>
+<p><strong>Figure 1.3a</strong> shows random samples from each class.
+- The "real" class is not only photographs. It also contains paintings, drawings, collages and stock-photo grids.
+- The AI class leans toward saturated, smooth, "digital-art" portraits and fantasy scenes.</p>
+<p>So the model can partly learn <em>style</em> instead of <em>generation artefacts</em>, and real paintings are likely to be confused with AI art.</p>
+<p><figure><img src="../reports/figs/hist_width.png"><figcaption>Figure 1.3b – width per class</figcaption></figure>
+<figure><img src="../reports/figs/hist_height.png"><figcaption>Figure 1.3c – height per class</figcaption></figure>
+<figure><img src="../reports/figs/hist_file_size.png"><figcaption>Figure 1.3d – file size per class</figcaption></figure></p>
+<p><strong>Figures 1.3b–c (width and height).</strong>
+- Both classes peak below 2000 px.
+- AI images cluster at generator-native sizes around 1024 px (and 512/2048).
+- Real images spread wider, with a long tail up to 8495 px.</p>
+<p>Size alone carries a weak class signal. Resizing everything to 224×224 removes it, which is good, because a classifier should not depend on resolution.</p>
+<p><strong>Figure 1.3d (file size).</strong> Real files have the heavier tail (camera JPEGs up to 10 MB), while AI files are more uniform. This decided the upload limit for the web app: 5 MB, which covers about 99% of the data.</p>
+<h2>1.4 DVC (data version control)</h2>
+<p><strong>Toy part</strong> (folder <code>dvc_toy</code>, Figures 1.4a–h). These are the steps, in order:
+1. <code>git init</code> and <code>dvc init</code>.
+2. Create a 3-row <code>data.csv</code>, then <code>dvc add data.csv</code>. This creates the pointer <code>data.csv.dvc</code> and adds <code>data.csv</code> to <code>.gitignore</code>. Then commit (v1).
+3. Append a row, run <code>dvc add</code> again and commit (v2).
+4. <code>git checkout HEAD~1 -- data.csv.dvc</code> followed by <code>dvc checkout</code> brought back the <strong>3-row</strong> version. <code>git checkout HEAD -- data.csv.dvc</code> and <code>dvc checkout</code> returned the 4-row version.
+5. Add a local folder remote (<code>dvc remote add -d localremote …</code>) and <code>dvc push</code>.
+6. Delete <code>data.csv</code> <strong>and</strong> <code>.dvc/cache</code>, then <code>dvc pull</code>. The pull printed "1 file fetched and 1 file added", so the file was restored from the remote.
+7. Push the Git history to DagsHub (<code>Rebelhere/L230518_A2_Ops_toy</code>). DagsHub shows <code>data.csv</code> as a DVC-tracked file next to its pointer.</p>
+<p><figure><img src="img/1.4_toy_cmds_a.png"><figcaption>Figure 1.4a – toy commands</figcaption></figure>
+<figure><img src="img/1.4_toy_cmds_b.png"><figcaption>Figure 1.4b – toy commands (remote, push, delete, pull)</figcaption></figure>
+<figure><img src="img/1.4_toy_out_a.png"><figcaption>Figure 1.4c – init output</figcaption></figure>
+<figure><img src="img/1.4_toy_out_b.png"><figcaption>Figure 1.4d – pointer file content and v1/v2 commits</figcaption></figure>
+<figure><img src="img/1.4_toy_out_c.png"><figcaption>Figure 1.4e – checkout of the old version (3 rows) and back (4 rows)</figcaption></figure>
+<figure><img src="img/1.4_toy_out_d.png"><figcaption>Figure 1.4f – push, deletion and pull restore the file</figcaption></figure>
+<figure><img src="img/1.4_toy_push_dagshub.png"><figcaption>Figure 1.4g – pushing the toy repo to DagsHub</figcaption></figure>
+<figure><img src="img/1.4_toy_dagshub.png"><figcaption>Figure 1.4h – toy repo on DagsHub</figcaption></figure></p>
+<p><strong>Apply.</strong>
+- I tracked the whole <code>data/</code> folder with <code>dvc add data</code>, using DagsHub storage as the <code>origin</code> remote.
+- <code>data.dvc</code> (Figure 1.4i) holds the directory hash <code>b2cec678…​.dir</code>, the size (503,783,378 bytes) and the file count (975).
+- <code>dvc status -c</code> reports "Cache and remote 'origin' are in sync" (Figure 1.4j).
+- DagsHub and GitHub both show <code>data</code> as DVC-managed. Only the pointer is in Git (Figures 1.4k–l).</p>
+<p><strong>What the pointer file holds and why large data stays out of Git.</strong>
+- The <code>.dvc</code> file is a few lines of YAML: a content hash (md5), a size, a file count and a path. The hash is the address of the real content in the DVC cache and remote, so the Git commit pins <em>exactly</em> which data version the code used.
+- Git stores every version of every file forever and diffs them as text. A 500 MB image folder would bloat every clone, slow every operation, and exceed GitHub's size limits.
+- DVC stores the data once per content hash in cheap object storage and keeps Git small.
+- Every MLflow run is tagged with this hash (<code>dvc_data_md5</code>; see Chapter 3).</p>
+<p><figure><img src="img/1.4_data_pointer.png"><figcaption>Figure 1.4i – data.dvc pointer for the dataset</figcaption></figure>
+<figure><img src="img/1.4_dvc_status.png"><figcaption>Figure 1.4j – cache and DagsHub remote in sync</figcaption></figure>
+<figure><img src="img/1.4_dagshub_repo.png"><figcaption>Figure 1.4k – DagsHub repository (data tracked by DVC)</figcaption></figure>
+<figure><img src="img/1.4_github_repo.png"><figcaption>Figure 1.4l – GitHub repository</figcaption></figure></p>
+<hr />
+<h1>Chapter 2: Model development with TensorFlow/Keras</h1>
+<h2>2.1 Input pipeline</h2>
+<p><code>src/data.py::make_ds</code> builds a <code>tf.data</code> pipeline. The stages, in order:
+1. <strong>Read split list.</strong> <code>from_tensor_slices((paths, labels))</code> reads the paths and labels from <code>splits/&lt;split&gt;.csv</code>. Only these three lists are used, so no image can leak between splits.
+2. <strong>Decode and resize.</strong> <code>map(_load, AUTOTUNE)</code> calls <code>src/preprocess.py::decode_resize</code>:
+   - <code>tf.io.decode_image(channels=3, expand_animations=False)</code> handles both JPEG and PNG, forces 3 channels (drops alpha, expands greyscale and palette), and takes the first frame of a GIF-like file.
+   - <code>tf.image.resize</code> makes the image 224×224 with bilinear interpolation, as float32 values in [0, 255].
+3. <strong>Cache.</strong> <code>cache()</code> keeps the decoded images in memory after the first epoch. Decoding 5–10 MB JPEGs is the most expensive step.
+4. <strong>Shuffle.</strong> <code>shuffle(len, seed=42, reshuffle_each_iteration=True)</code> runs on training data only.
+5. <strong>Augment</strong> (training data only): <code>RandomFlip("horizontal")</code>, <code>RandomRotation(0.08)</code>, <code>RandomZoom(0.15)</code> and <code>RandomContrast(0.15)</code>. These perturbations are mild, so they don't destroy the high-frequency artefacts that separate AI images from real ones.
+6. <strong>Batch and prefetch.</strong> <code>batch(32)</code> then <code>prefetch(AUTOTUNE)</code> lets the CPU prepare the next batch while the model trains on the current one.</p>
+<p><strong>Image size.</strong>
+- <strong>224×224</strong> is the native ImageNet input of MobileNetV2, so the pretrained filters see objects at the scale they were trained on.
+- It is also small enough for CPU training.</p>
+<p><strong>Aspect ratio.</strong>
+- <code>tf.image.resize</code> <strong>stretches</strong> the image; it does not keep the aspect ratio. A 1024×576 image is squeezed horizontally.
+- I chose stretching over crop or pad because cropping can cut off the part of the image that shows the artefact, and padding adds black borders the model could learn to use.
+- The same stretch is applied in serving (Chapter 4), so training and serving still agree.</p>
+<figure><img src="../reports/figs/augmented_batch.png"><figcaption>Figure 2.1 – one augmented training batch</figcaption></figure>
+<h2>2.2 Baseline CNN</h2>
+<p><code>src/models.py::build_cnn</code> (Figures 2.2a–c, table in <code>reports/cnn_layers.csv</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Output shape</th>
+<th>Params</th>
+<th>Why it is there</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Input</td>
+<td>(224, 224, 3)</td>
+<td>0</td>
+<td>raw RGB in [0, 255]</td>
+</tr>
+<tr>
+<td>Rescaling(1/255)</td>
+<td>(224, 224, 3)</td>
+<td>0</td>
+<td>puts inputs in [0, 1] so gradients are well-scaled</td>
+</tr>
+<tr>
+<td>Conv2D 32, 3×3 (no bias)</td>
+<td>(224, 224, 32)</td>
+<td>864</td>
+<td>learns local edges and texture; no bias because BN follows</td>
+</tr>
+<tr>
+<td>BatchNormalization</td>
+<td>(224, 224, 32)</td>
+<td>128</td>
+<td>stabilises and speeds up training</td>
+</tr>
+<tr>
+<td>ReLU</td>
+<td>(224, 224, 32)</td>
+<td>0</td>
+<td>non-linearity</td>
+</tr>
+<tr>
+<td>MaxPooling2D</td>
+<td>(112, 112, 32)</td>
+<td>0</td>
+<td>halves resolution, grows the receptive field</td>
+</tr>
+<tr>
+<td>Conv 64 + BN + ReLU + Pool</td>
+<td>(56, 56, 64)</td>
+<td>18,432 + 256</td>
+<td>mid-level patterns</td>
+</tr>
+<tr>
+<td>Conv 128 + BN + ReLU + Pool</td>
+<td>(28, 28, 128)</td>
+<td>73,728 + 512</td>
+<td>higher-level patterns</td>
+</tr>
+<tr>
+<td>Conv 128 + BN + ReLU + Pool</td>
+<td>(14, 14, 128)</td>
+<td>147,456 + 512</td>
+<td></td>
+</tr>
+<tr>
+<td>GlobalAveragePooling2D</td>
+<td>(128)</td>
+<td>0</td>
+<td>one value per channel; far fewer weights than Flatten, so less overfitting</td>
+</tr>
+<tr>
+<td>Dropout(0.4)</td>
+<td>(128)</td>
+<td>0</td>
+<td>regularisation for a small dataset (681 training images)</td>
+</tr>
+<tr>
+<td>Dense(1, sigmoid)</td>
+<td>(1)</td>
+<td>129</td>
+<td>outputs p(AI)</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td></td>
+<td><strong>242,017</strong> (241,313 trainable)</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Loss.</strong> Binary cross-entropy is the correct likelihood for a single sigmoid output with 0/1 labels.</p>
+<p><strong>Optimizer.</strong> Adam at lr = 1e-3 gives robust default step sizes, so it needs no hand-tuned schedule (ReduceLROnPlateau handles the rest).</p>
+<p><strong>Metrics.</strong> Accuracy, precision, recall and AUC. Because the classes are imbalanced and the two errors cost differently (see 2.5), accuracy alone isn't enough. AUC measures ranking quality independently of the threshold.</p>
+<p><figure><img src="img/2.2_summary_a.png"><figcaption>Figure 2.2a – CNN model summary (1)</figcaption></figure>
+<figure><img src="img/2.2_summary_b.png"><figcaption>Figure 2.2b – CNN model summary (2)</figcaption></figure>
+<figure><img src="img/2.2_summary_c.png"><figcaption>Figure 2.2c – summary end and per-layer table</figcaption></figure></p>
+<h2>2.3 Transfer learning (MobileNetV2)</h2>
+<p><code>src/models.py::build_mobilenet</code> loads <code>keras.applications.MobileNetV2(include_top=False, weights="imagenet")</code>, which leaves out the 1000-class classifier.</p>
+<p><strong>Head.</strong> GAP, then Dropout(0.3), then Dense(1, sigmoid).</p>
+<p><strong>Preprocessing.</strong>
+- <code>mobilenet_v2.preprocess_input</code> maps [0, 255] to <strong>[-1, 1]</strong>, which is the scaling MobileNetV2 was pretrained with. Feeding [0, 1] or [0, 255] would shift every activation, and the pretrained filters would then see "wrong" inputs.
+- I put this step <strong>inside the model graph</strong>. The saved <code>.keras</code> file therefore contains it, and the serving code cannot forget it.</p>
+<p><strong>Stage 1 (frozen base).</strong>
+- <code>base.trainable = False</code>, and the base is called with <code>training=False</code> so BatchNorm stays in inference mode.
+- The only trainable weights are <code>dense_1/kernel</code> and <code>dense_1/bias</code>: 1,281 parameters.
+- Adam lr = 1e-3, up to 15 epochs.</p>
+<p><strong>Stage 2 (fine-tune the last block).</strong> <code>unfreeze_last_block</code> sets <code>trainable=True</code> only for the <code>block_16_*</code> layers and <code>Conv_1</code>:
+- <code>block_16_expand</code>, <code>block_16_expand_relu</code>, <code>block_16_depthwise</code>, <code>block_16_depthwise_relu</code>, <code>block_16_project</code> and <code>Conv_1</code>;
+- 880,321 trainable parameters;
+- BatchNorm layers stay frozen, so the small batches don't corrupt their running statistics;
+- recompiled with a <strong>much smaller learning rate</strong> (1e-5 for the first runs, 1e-4 for the best one) for up to 10 epochs.</p>
+<p>The small learning rate lets the pretrained features shift slightly toward "AI vs real" cues without erasing what they learned from ImageNet.</p>
+<p><figure><img src="img/2.3_trainable_layers.png"><figcaption>Figure 2.3a – trainable weights in stage 1 and trainable layers in stage 2</figcaption></figure>
+<figure><img src="../reports/figs/curves_mobilenet_ft_lr1e-4.png"><figcaption>Figure 2.3b – training curves, both stages (champion run mobilenet_ft_lr1e-4); dotted line = stage switch</figcaption></figure>
+<figure><img src="../reports/figs/curves_mobilenet_manual.png"><figcaption>Figure 2.3c – training curves, first fine-tuned run mobilenet_manual</figcaption></figure></p>
+<h2>2.4 Training discipline</h2>
+<p><strong>Seeds.</strong> <code>keras.utils.set_random_seed(42)</code> seeds Python, NumPy and TF, and the split and the shuffle also use seed 42.</p>
+<p><strong>Callbacks</strong> (<code>src/train.py::fit_stage</code>), on every stage:
+- <code>EarlyStopping(val_loss, patience=5, restore_best_weights=True)</code>;
+- <code>ModelCheckpoint(models/&lt;run&gt;_&lt;stage&gt;.keras, monitor=val_loss, save_best_only=True)</code>;
+- <code>ReduceLROnPlateau(val_loss, factor=0.3, patience=2, min_lr=1e-7)</code>.</p>
+<p><strong>Best epoch.</strong> The best epoch (lowest val_loss) of each stage is logged as <code>best_epoch_stage1/2</code> and marked with a red dashed line in the curves.</p>
+<table>
+<thead>
+<tr>
+<th>Run</th>
+<th>Best epoch, stage 1</th>
+<th>Best epoch, stage 2</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>mobilenet_ft_lr1e-4 (champion)</strong></td>
+<td><strong>15</strong> (val_loss 0.568)</td>
+<td><strong>6</strong> (val_loss 0.524)</td>
+</tr>
+<tr>
+<td>mobilenet_manual</td>
+<td>13 (0.544)</td>
+<td>9 (0.537)</td>
+</tr>
+<tr>
+<td>cnn_baseline</td>
+<td>9 (0.655)</td>
+<td>–</td>
+</tr>
+</tbody>
+</table>
+<p>Stage 1 of the champion was still improving at the 15-epoch cap; stage 2 then lowered val_loss further. The CNN overfit after epoch 9, and early stopping restored those weights.</p>
+<figure><img src="../reports/figs/curves_cnn_baseline.png"><figcaption>Figure 2.4 – loss and accuracy with best epoch marked (CNN baseline)</figcaption></figure>
+<h2>2.5 Evaluation (test set, once)</h2>
+<p>I chose the model and the threshold on <strong>validation</strong> data only. The test set was then used once for each of the two final models (<code>scripts/final_eval.py</code>, Figures 2.5a–c, <code>reports/test_results.csv</code>). The threshold in that run was the validation-F1-optimal one.</p>
+<table>
+<thead>
+<tr>
+<th>Model (test, n = 146)</th>
+<th>Threshold</th>
+<th>Accuracy</th>
+<th>Precision</th>
+<th>Recall</th>
+<th>F1</th>
+<th>ROC-AUC</th>
+<th>TN</th>
+<th>FP</th>
+<th>FN</th>
+<th>TP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Baseline CNN</td>
+<td>0.364</td>
+<td>0.582</td>
+<td>0.571</td>
+<td>0.950</td>
+<td>0.714</td>
+<td>0.669</td>
+<td>9</td>
+<td>57</td>
+<td>4</td>
+<td>76</td>
+</tr>
+<tr>
+<td><strong>MobileNetV2 fine-tuned</strong></td>
+<td>0.366</td>
+<td><strong>0.788</strong></td>
+<td><strong>0.725</strong></td>
+<td><strong>0.988</strong></td>
+<td><strong>0.836</strong></td>
+<td><strong>0.870</strong></td>
+<td>36</td>
+<td>30</td>
+<td>1</td>
+<td>79</td>
+</tr>
+</tbody>
+</table>
+<p>Transfer learning wins on every metric. The CNN's AUC of 0.67 shows that 681 images aren't enough to learn good features from scratch.</p>
+<p><strong>Which error is worse.</strong>
+- For VisionGuard, <strong>calling a real photo fake (a false positive)</strong> is worse. It can wrongly accuse a photographer or journalist of fabrication, damage their reputation, and get real evidence dismissed.
+- Missing an AI image leaves the user where they were without the tool.</p>
+<p><strong>Threshold choice.</strong>
+- The F1-optimal threshold (0.366) flags 30 of 66 real test photos as AI (FPR 45%), which is unacceptable for this product.
+- <code>scripts/threshold_table.py</code> and <code>scripts/pick_threshold.py</code> scan the <strong>validation</strong> ROC curve (Figure 2.5d). They pick the threshold with the highest AI recall subject to <strong>FPR ≤ 20%</strong>, which gives <strong>t = 0.771</strong>.
+- Youden's J would pick 0.836, which is even stricter.</p>
+<table>
+<thead>
+<tr>
+<th>Threshold 0.771</th>
+<th>False-alarm rate (real → AI)</th>
+<th>AI recall</th>
+<th>Precision</th>
+<th>Accuracy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Validation</td>
+<td>0.200</td>
+<td>0.667</td>
+<td>0.806</td>
+<td>0.726</td>
+</tr>
+<tr>
+<td>Test</td>
+<td><strong>0.182</strong></td>
+<td>0.688</td>
+<td><strong>0.821</strong></td>
+<td>0.747</td>
+</tr>
+</tbody>
+</table>
+<p>The test false-alarm rate (18%) matches the validation target (20%), so the threshold generalised. The deployed app uses t = 0.771, read from the <code>THRESHOLD</code> environment variable.</p>
+<p><figure><img src="../reports/figs/test_cm_mobilenet_ft_lr1e-4.png"><figcaption>Figure 2.5a – test confusion matrix, MobileNetV2</figcaption></figure>
+<figure><img src="../reports/figs/test_roc_mobilenet_ft_lr1e-4.png"><figcaption>Figure 2.5b – test ROC, MobileNetV2</figcaption></figure>
+<figure><img src="../reports/figs/test_cm_cnn_baseline.png"><figcaption>Figure 2.5c – test confusion matrix and ROC, CNN</figcaption></figure>
+<figure><img src="img/2.5_threshold_table.png"><figcaption>Figure 2.5d – threshold trade-off on validation data</figcaption></figure></p>
+<h2>2.6 Error analysis</h2>
+<figure><img src="../reports/figs/misclassified_mobilenet_ft_lr1e-4.png"><figcaption>Figure 2.6 – 10 misclassified test images (all are real images flagged as AI at the F1 threshold)</figcaption></figure>
+<p>All 10 errors with the highest confidence are <strong>real images predicted as AI</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Image</th>
+<th>p(AI)</th>
+<th>Hypothesis</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>3 B&amp;W self-portraits (collage)</td>
+<td>1.00</td>
+<td>high-contrast studio B&amp;W with smooth skin and a stylised pose looks like AI portraits; collage seams</td>
+</tr>
+<tr>
+<td>2</td>
+<td>3-photo collage with a "People" watermark</td>
+<td>0.98</td>
+<td>collage layout + heavy retouching; magazine-style beauty edits resemble AI faces</td>
+</tr>
+<tr>
+<td>3</td>
+<td>cat with ducklings</td>
+<td>0.94</td>
+<td>soft, shallow depth of field and "too cute" composition; downscaling hides sensor noise</td>
+</tr>
+<tr>
+<td>4</td>
+<td>painter's palette and brushes</td>
+<td>0.92</td>
+<td>saturated paint textures; painting-like content is common in the AI class</td>
+</tr>
+<tr>
+<td>5</td>
+<td>huge crowd</td>
+<td>0.91</td>
+<td>repeated faces / texture tiling, similar to the repetition artefacts of generators</td>
+</tr>
+<tr>
+<td>6</td>
+<td>stock grid of faces (shutterstock watermark)</td>
+<td>0.90</td>
+<td>grid of uniformly lit, retouched faces; the AI class has many portrait grids</td>
+</tr>
+<tr>
+<td>7</td>
+<td>painting of a girl with a chaffinch</td>
+<td>0.86</td>
+<td><strong>a painting labelled real</strong>: style, not generation, drives the prediction</td>
+</tr>
+<tr>
+<td>8</td>
+<td>film-noir portrait</td>
+<td>0.85</td>
+<td>dramatic lighting and smooth gradients, typical of AI "cinematic" prompts</td>
+</tr>
+<tr>
+<td>9</td>
+<td>abstract tree painting</td>
+<td>0.84</td>
+<td>flat saturated colours, an artwork, not a photo</td>
+</tr>
+<tr>
+<td>10</td>
+<td>cut-out celebrity collage on a pastel background</td>
+<td>0.82</td>
+<td>graphic-design composite with clean edges and no camera noise</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Conclusion.</strong> The model partly learned "artistic / retouched / composite → AI". This is a dataset bias: the real class contains paintings and edited stock images. It is why the deployed threshold was raised to 0.771, and why the result page carries a caveat about paintings and edited photos.</p>
+<h2>2.7 Tool lab: Keras Tuner</h2>
+<p><strong>Toy part</strong> (<code>scripts/toy_tuner.py</code>).
+- RandomSearch with 8 trials on Fashion-MNIST (10k training images, 2k validation, 5 epochs).
+- Search space: <code>units</code> ∈ {32, …, 256} and <code>lr</code> ∈ [1e-4, 1e-2] on a log scale.</p>
+<table>
+<thead>
+<tr>
+<th>units</th>
+<th>lr</th>
+<th>val_accuracy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>256</strong></td>
+<td><strong>1.7e-3</strong></td>
+<td><strong>0.855</strong></td>
+</tr>
+<tr>
+<td>128</td>
+<td>3.1e-4</td>
+<td>0.845</td>
+</tr>
+<tr>
+<td>128</td>
+<td>3.5e-4</td>
+<td>0.841</td>
+</tr>
+<tr>
+<td>256</td>
+<td>1.2e-4</td>
+<td>0.839</td>
+</tr>
+<tr>
+<td>160</td>
+<td>1.4e-4</td>
+<td>0.837</td>
+</tr>
+<tr>
+<td>256</td>
+<td>1.5e-4</td>
+<td>0.837</td>
+</tr>
+<tr>
+<td>192</td>
+<td>1.2e-4</td>
+<td>0.833</td>
+</tr>
+<tr>
+<td>256</td>
+<td>5.1e-4</td>
+<td>0.827</td>
+</tr>
+</tbody>
+</table>
+<p>The best settings (read with <code>get_best_hyperparameters</code>) are 256 units and lr ≈ 1.7e-3. For a 5-epoch budget, the learning rate matters more than width: the four slowest learning rates are near the bottom of the table.</p>
+<p><strong>Apply</strong> (<code>scripts/tune_visionguard.py</code>).
+- A <code>kt.HyperModel</code> wraps <code>build_mobilenet</code> and searches three things:
+  - <code>dropout</code> ∈ {0.2, 0.3, 0.4, 0.5};
+  - <code>lr</code> ∈ [1e-4, 1e-3] on a log scale;
+  - <code>unfrozen_layers</code> ∈ {0, 10, 30, 60}, the number of last base layers fine-tuned at lr/10.
+- RandomSearch ran <strong>8 trials</strong> with the objective of maximising <code>val_auc</code> (6 head epochs + 4 fine-tune epochs, early stopping).</p>
+<table>
+<thead>
+<tr>
+<th>dropout</th>
+<th>lr</th>
+<th>unfrozen layers</th>
+<th>val AUC</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>0.3</strong></td>
+<td><strong>1.75e-4</strong></td>
+<td><strong>60</strong></td>
+<td><strong>0.773</strong></td>
+</tr>
+<tr>
+<td>0.3</td>
+<td>3.53e-4</td>
+<td>0</td>
+<td>0.751</td>
+</tr>
+<tr>
+<td>0.3</td>
+<td>1.87e-4</td>
+<td>60</td>
+<td>0.748</td>
+</tr>
+<tr>
+<td>0.4</td>
+<td>1.10e-4</td>
+<td>30</td>
+<td>0.745</td>
+</tr>
+<tr>
+<td>0.3</td>
+<td>8.20e-4</td>
+<td>0</td>
+<td>0.741</td>
+</tr>
+<tr>
+<td>0.2</td>
+<td>2.03e-4</td>
+<td>10</td>
+<td>0.725</td>
+</tr>
+<tr>
+<td>0.4</td>
+<td>2.79e-4</td>
+<td>10</td>
+<td>0.709</td>
+</tr>
+<tr>
+<td>0.3</td>
+<td>1.09e-4</td>
+<td>0</td>
+<td>0.582</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Which setting mattered most.</strong>
+- <strong>The number of unfrozen layers, together with the learning rate.</strong> With 0 unfrozen layers, the results range from 0.58 to 0.75 depending only on lr. The worst trial (lr 1.1e-4, frozen) simply had not converged in 6 epochs.
+- Unfreezing 60 layers gave the two best AUCs (0.773 and 0.748).
+- Dropout between 0.2 and 0.4 had no consistent effect.</p>
+<p>This agrees with my manual runs (3.5): fine-tuning more of the network with a moderate learning rate helped most.</p>
+<p><strong>Why choosing the best validation score can overfit the validation set.</strong>
+- The validation set has only 146 images, and one image is worth about 0.7 percentage points of accuracy.
+- Over many trials, some configurations win partly by luck on those particular images. Taking the maximum selects that luck, which is a <strong>winner's curse</strong>: the best trial's validation score is optimistically biased.
+- Trials 1 and 3 had almost the same settings (60 layers, lr 1.8e-4 vs 1.9e-4) but AUCs of 0.773 and 0.748, so the noise is about the size of the gaps between trials.
+- This is why the <strong>test set is used only once</strong>, after all choices are made, and why the reported performance comes from the test set, not from the best validation score.</p>
+<p>⏳ <em>Add a terminal screenshot of both tuner runs: <code>img/2.7_toy_tuner.png</code>, <code>img/2.7_vg_tuner.png</code>.</em></p>
+<h2>Bonus: Grad-CAM</h2>
+<p><code>scripts/gradcam.py</code> computes Grad-CAM from the last convolutional block of MobileNetV2 (7×7×1280) for 4 correct and 4 wrong test predictions at t = 0.771.</p>
+<figure><img src="../reports/figs/gradcam.png"><figcaption>Figure 2.8 – Grad-CAM: top = image, bottom = heat map (red = most influence on p(AI))</figcaption></figure>
+<p><strong>What the model looks at.</strong>
+- <strong>Correct AI cases.</strong> On the psychedelic collage, the heat sits on the over-detailed face with its saturated, repeated textures. On the weathered-face portrait, it covers the eyes and the unnaturally uniform skin "cracks". These are plausible generator artefacts.
+- <strong>Correct real cases.</strong> For the studio headshot, the evidence for AI is weak and centred on the face, so p = 0.05. For the child-style drawing, it sits on a small region at the bottom.
+- <strong>Real images flagged as AI.</strong>
+  - On the paint palette (p = 0.92), the model focuses on the dense, colourful <em>paint texture</em> in the corner, not on any photographic flaw.
+  - On the crowd photo (0.91), it focuses on the repeated pattern of tiny faces at the bottom.</p>
+<p>Both confirm the hypothesis from 2.6: busy, saturated, repetitive <em>texture</em> is read as "AI".
+- <strong>AI images missed.</strong>
+  - On the leopard (0.46), the attention spreads over the fur and the background, and nothing stands out.
+  - On the photorealistic portrait (0.70, just under the 0.771 threshold), the attention is on the face, but the face is clean enough to pass as real.</p>
+<p><strong>Conclusion.</strong>
+- The model mostly uses <strong>texture and colour statistics in salient regions</strong> (faces, dense patterns). It is not keying on watermarks or borders, which is good.
+- Texture is also its weakness: real artworks and crowded scenes trigger it, and clean photorealistic AI faces escape it.</p>
+<p><strong>What went wrong.</strong>
+- My first Grad-CAM version rebuilt the forward pass layer by layer. In Keras 3, <code>preprocess_input</code> is stored as a graph op inside the saved model, <strong>not</strong> as a layer in <code>model.layers</code>, so the rebuild skipped the [-1, 1] scaling. The heat maps looked plausible, but the probabilities were wrong (0.24 instead of 0.999 for the same image).
+- I found it by comparing against the inference module's output. I now re-apply <code>preprocess_input</code> and <code>assert</code> that Grad-CAM's p(AI) equals <code>model(x)</code> for every image. This was a small, real example of the training/serving-skew problem discussed in 4.1.</p>
+<hr />
+<h1>Chapter 3: Experiment tracking with MLflow and DagsHub</h1>
+<h2>3.1 Tool lab: MLflow locally</h2>
+<p><strong>What I did.</strong>
+- <code>scripts/toy_mlflow.py local</code> trains a small dense network on Fashion-MNIST twice, with lr = 0.01 and lr = 1e-4. It logs to a local SQLite store (<code>sqlite:///toy.db</code>).
+- Each run logs three parameters (<code>lr</code>, <code>units</code>, <code>epochs</code>), per-epoch metrics, one plot (<code>loss_curve.png</code>), the Keras model, and the tags <code>stage=toy</code> and <code>target=local</code>.
+- <code>mlflow ui --backend-store-uri sqlite:///toy.db</code> opened the UI. I compared the two runs in the parallel-coordinates view (Figures 3.1a–h).</p>
+<p><strong>Result.</strong> lr = 0.01 reached accuracy 0.854 / val 0.824 in 5 epochs; lr = 1e-4 reached 0.791 / val 0.798. The small learning rate is still under-trained after 5 epochs.</p>
+<p><strong>Definitions (my own words):</strong>
+- <strong>Experiment</strong>: a named folder that groups runs trying to solve the same problem (<code>toy-fashion-mnist</code>, <code>VisionGuard</code>).
+- <strong>Run</strong>: one execution of the training code, with a unique id, start time, status and source commit.
+- <strong>Parameter</strong>: an input I chose before the run that does not change during it (learning rate, dropout). It is logged once.
+- <strong>Metric</strong>: a number measured <em>by</em> the run, possibly many times with a step (val_loss per epoch, final test F1).
+- <strong>Artifact</strong>: any output file stored with the run (plots, split lists, <code>pip_freeze.txt</code>, the model).
+- <strong>Tag</strong>: free-form key/value metadata about the run (git commit, data hash, seed, "manual" vs "autolog"). It is used to search and filter runs.</p>
+<p><figure><img src="img/3.1_toy_train_a.png"><figcaption>Figure 3.1a – both toy runs trained locally</figcaption></figure>
+<figure><img src="img/3.1_toy_train_b.png"><figcaption>Figure 3.1b – second run and the MLflow UI starting</figcaption></figure>
+<figure><img src="img/3.1_local_runs.png"><figcaption>Figure 3.1c – the two runs in the local UI</figcaption></figure>
+<figure><img src="img/3.1_run_overview.png"><figcaption>Figure 3.1d – run overview with metrics</figcaption></figure>
+<figure><img src="img/3.1_run_params_tags.png"><figcaption>Figure 3.1e – parameters and tags</figcaption></figure>
+<figure><img src="img/3.1_run_metrics.png"><figcaption>Figure 3.1f – per-epoch metric charts</figcaption></figure>
+<figure><img src="img/3.1_run_artifact.png"><figcaption>Figure 3.1g – logged plot artifact</figcaption></figure>
+<figure><img src="img/3.1_compare_b.png"><figcaption>Figure 3.1h – comparison view of the two learning rates</figcaption></figure></p>
+<h2>3.2 DagsHub setup</h2>
+<p><strong>What I did.</strong>
+- The DagsHub repository <code>Rebelhere/L230518_A2_Ops</code> is connected to the GitHub repository (Figure 1.4k). Its MLflow tracking address is <code>https://dagshub.com/Rebelhere/L230518_A2_Ops.mlflow</code>.
+- I created a DagsHub access token and stored three values only in <code>.env</code>:
+  - <code>MLFLOW_TRACKING_URI</code>,
+  - <code>MLFLOW_TRACKING_USERNAME</code>,
+  - <code>MLFLOW_TRACKING_PASSWORD</code> (the token).
+- The code calls <code>load_dotenv()</code>, and MLflow reads these variables automatically, so no credential appears in source code.
+- <code>.env</code> is git-ignored: <code>git check-ignore -v .env</code> → <code>.gitignore:2:.env</code>, and <code>git status</code> doesn't list it (Figure 3.2a). <code>.env.example</code> documents the variable names without values.
+- I repeated the toy run against DagsHub (Figure 3.2b).</p>
+<p><figure><img src="img/3.2_env_ignored.png"><figcaption>Figure 3.2a – .env is ignored by Git</figcaption></figure>
+<figure><img src="img/3.2_dagshub_toy_runs.png"><figcaption>Figure 3.2b – toy runs on DagsHub</figcaption></figure></p>
+<h2>3.3 Instrumenting VisionGuard training</h2>
+<p><code>src/train.py</code> logs every run to the <code>VisionGuard</code> experiment:
+- <strong>Tags:</strong>
+  - <code>git_commit</code> (from <code>git rev-parse HEAD</code>);
+  - <code>dvc_data_md5</code> (the hash read from <code>data.dvc</code>, which ties the run to the exact data version);
+  - <code>seed=42</code>;
+  - <code>model</code>;
+  - <code>logging</code>.
+- <strong>Parameters:</strong> every CLI argument (lr, ft_lr, dropout, epochs, ft_epochs, augmentation), plus img_size and batch.
+- <strong>Per-epoch metrics:</strong> loss, accuracy, precision, recall and AUC for training and validation.
+- <strong>Final metrics:</strong> <code>best_epoch_stage*</code>, <code>threshold</code>, <code>final_val_*</code> and, with <code>--test</code>, <code>test_*</code>.</p>
+<p><strong>Manual approach</strong> (<code>--logging manual</code>, run <code>mobilenet_manual</code>, Figures 3.3a–e).
+- A custom Keras callback <code>EpochLogger</code> calls <code>mlflow.log_metrics(logs, step=offset+epoch)</code> at the end of each epoch.
+- The step offset makes stage 2 continue on the same x-axis as stage 1.
+- I decide exactly what is logged and how it is named.</p>
+<p><strong>Autolog approach</strong> (<code>--logging autolog</code>, run <code>mobilenet_autolog</code>, Figures 3.3f–g). <code>mlflow.tensorflow.autolog()</code> hooks into <code>model.fit</code> and captures, without any code:
+- every <code>fit</code> argument and optimizer setting (43 parameters, e.g. <code>opt_name=adam</code>, <code>opt_learning_rate</code>, <code>batch_size</code>, <code>class_weight</code>);
+- per-epoch metrics;
+- a model summary;
+- TensorBoard logs;
+- early-stopping info.</p>
+<p><strong>What each approach captures or misses.</strong>
+- <strong>Autolog is broad but generic.</strong>
+  - Every <code>fit()</code> call starts its step counter at 0, so the stage-2 curves overwrite stage 1 instead of continuing it (its charts show only 2 steps).
+  - It can't know domain values: the validation-chosen threshold, the test metrics, the confusion matrix, or the data hash.
+- <strong>Manual logging is precise but only as complete as my code.</strong> It missed the optimizer internals, which autolog logged for free.</p>
+<p>I kept both: autolog for the automatic extras, plus manual calls for the domain values.</p>
+<p><strong>What went wrong.</strong>
+- The first autolog run <strong>failed</strong> (red ✗ in Figures 3.3h–i). Autolog tried to log the model with <code>mlflow.keras.log_model</code>, which failed for the nested MobileNetV2 model.
+- MLflow 3 had also deprecated <code>artifact_path</code> there.
+- I set <code>log_models=False</code>, wrapped <code>log_model</code> in try/except, and save the <code>.keras</code> file as a plain artifact (<code>model_file/</code>) as a fallback. <code>scripts/finish_autolog_run.py</code> completed the logging for the autolog run.</p>
+<p><figure><img src="img/3.3_manual_details.png"><figcaption>Figure 3.3a – manual run details (commit, source, duration)</figcaption></figure>
+<figure><img src="img/3.3_manual_params.png"><figcaption>Figure 3.3b – manual run parameters and metrics</figcaption></figure>
+<figure><img src="img/3.3_manual_metrics.png"><figcaption>Figure 3.3c – manual run final validation metrics</figcaption></figure>
+<figure><img src="img/3.3_manual_charts_a.png"><figcaption>Figure 3.3d – manual per-epoch charts over both stages (25 steps)</figcaption></figure>
+<figure><img src="img/3.3_manual_charts_b.png"><figcaption>Figure 3.3e – val_loss / precision / recall curves</figcaption></figure>
+<figure><img src="img/3.3_autolog_details.png"><figcaption>Figure 3.3f – autolog run details</figcaption></figure>
+<figure><img src="img/3.3_autolog_params.png"><figcaption>Figure 3.3g – autolog captured 43 parameters including optimizer settings</figcaption></figure>
+<figure><img src="img/3.3_autolog_failed_a.png"><figcaption>Figure 3.3h – the first autolog run failed</figcaption></figure>
+<figure><img src="img/3.3_experiments_list.png"><figcaption>Figure 3.3i – experiments list after the fix</figcaption></figure></p>
+<h2>3.4 Artifacts</h2>
+<p>Every run attaches these artifacts (Figures 3.4a–d):
+- <code>confusion_matrix_&lt;split&gt;.png</code> and <code>roc_curve_&lt;split&gt;.png</code>;
+- <code>splits/train.csv</code>, <code>val.csv</code> and <code>test.csv</code> (the exact split lists);
+- <code>pip_freeze.txt</code> (the package list);
+- the trained Keras model (<code>model/</code>, or the <code>.keras</code> file in <code>model_file/</code>);
+- <code>curves.png</code>.</p>
+<p>The autolog run additionally has <code>checkpoints/</code>, <code>tensorboard_logs/</code> and <code>model_summary.txt</code>.</p>
+<p><figure><img src="img/3.4_manual_artifacts.png"><figcaption>Figure 3.4a – artifacts of the manual run</figcaption></figure>
+<figure><img src="img/3.4_splits_artifacts.png"><figcaption>Figure 3.4b – split lists attached to the run</figcaption></figure>
+<figure><img src="img/3.4_autolog_artifacts.png"><figcaption>Figure 3.4c – artifacts of the autolog run</figcaption></figure>
+<figure><img src="img/3.4_model_logged.png"><figcaption>Figure 3.4d – logged Keras model</figcaption></figure></p>
+<h2>3.5 Experiment comparison</h2>
+<p>I ran 7 runs (Figures 3.5a–i, <code>reports/comparison.csv</code>). Each differs from <code>mobilenet_manual</code> (head lr 1e-3, ft lr 1e-5, augmentation on, 10 fine-tune epochs) in <strong>one</strong> change:</p>
+<table>
+<thead>
+<tr>
+<th>Run</th>
+<th>Single change vs mobilenet_manual</th>
+<th>val acc</th>
+<th>val prec</th>
+<th>val rec</th>
+<th>val F1</th>
+<th><strong>val AUC</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>mobilenet_ft_lr1e-4</strong></td>
+<td>fine-tune lr 1e-5 → <strong>1e-4</strong></td>
+<td><strong>0.753</strong></td>
+<td><strong>0.718</strong></td>
+<td>0.914</td>
+<td><strong>0.804</strong></td>
+<td><strong>0.835</strong></td>
+</tr>
+<tr>
+<td>mobilenet_manual</td>
+<td>(reference)</td>
+<td>0.740</td>
+<td>0.701</td>
+<td>0.926</td>
+<td>0.798</td>
+<td>0.807</td>
+</tr>
+<tr>
+<td>mobilenet_no_aug</td>
+<td>augmentation off</td>
+<td>0.705</td>
+<td>0.670</td>
+<td>0.926</td>
+<td>0.777</td>
+<td>0.803</td>
+</tr>
+<tr>
+<td>mobilenet_head_only</td>
+<td>no fine-tuning stage (frozen base)</td>
+<td>0.712</td>
+<td>0.689</td>
+<td>0.877</td>
+<td>0.772</td>
+<td>0.781</td>
+</tr>
+<tr>
+<td>mobilenet_autolog</td>
+<td>logging method only (control)</td>
+<td>0.692</td>
+<td>0.658</td>
+<td>0.926</td>
+<td>0.769</td>
+<td>0.779</td>
+</tr>
+<tr>
+<td>mobilenet_lr1e-4</td>
+<td>head lr 1e-3 → 1e-4</td>
+<td>0.658</td>
+<td>0.637</td>
+<td>0.889</td>
+<td>0.742</td>
+<td>0.752</td>
+</tr>
+<tr>
+<td>cnn_baseline</td>
+<td>backbone: MobileNetV2 → own CNN</td>
+<td>0.610</td>
+<td>0.590</td>
+<td>0.975</td>
+<td>0.735</td>
+<td>0.639</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Choice: <code>mobilenet_ft_lr1e-4</code>.</strong> These are the metrics I consider most important, in order:
+1. <strong>ROC-AUC.</strong> It is independent of the threshold. I move the threshold afterwards to control false alarms, so ranking quality is what the model itself must provide.
+2. <strong>Precision.</strong> Few real photos are called fake.
+3. <strong>F1.</strong></p>
+<p>The chosen run is best on all three. It is the only run that also improved stage-2 val_loss clearly (0.524 vs 0.537).</p>
+<p><strong>What each single change taught me:</strong>
+- Fine-tuning helps (head_only is −0.03 AUC).
+- Augmentation helps slightly.
+- A smaller head lr under-trains in 15 epochs.
+- A from-scratch CNN is far worse.
+- The autolog "control" differs from manual by 0.03 AUC with an identical configuration. That is a reminder of run-to-run noise on 146 validation images, the same effect discussed in 2.7.</p>
+<p><figure><img src="img/3.5_train_cmds.png"><figcaption>Figure 3.5a – training commands for the comparison runs</figcaption></figure>
+<figure><img src="img/3.5_compare_eval_a.png"><figcaption>Figure 3.5b – comparison table printed by scripts/compare_runs.py</figcaption></figure>
+<figure><img src="img/3.5_dagshub_compare_a.png"><figcaption>Figure 3.5c – DagsHub: comparing 7 experiments</figcaption></figure>
+<figure><img src="img/3.5_dagshub_compare_b.png"><figcaption>Figure 3.5d – tags differ only in commit; data hash and seed equal</figcaption></figure>
+<figure><img src="img/3.5_dagshub_compare_c.png"><figcaption>Figure 3.5e – parameters, diffs only</figcaption></figure>
+<figure><img src="img/3.5_dagshub_compare_d.png"><figcaption>Figure 3.5f – metrics side by side</figcaption></figure>
+<figure><img src="../reports/figs/comparison.png"><figcaption>Figure 3.5g – summary chart</figcaption></figure>
+<figure><img src="img/3.5_compare_eval_c.png"><figcaption>Figure 3.5h – final evaluation of both models logged to their runs</figcaption></figure>
+<figure><img src="img/3.5_mlflow_runs_b.png"><figcaption>Figure 3.5i – VisionGuard runs in the MLflow UI</figcaption></figure></p>
+<h2>3.6 Model registry</h2>
+<p><strong>What I did.</strong>
+- <code>scripts/register_models.py</code> registered <strong><code>L230518_A2_Ops_VisionGuard</code></strong> from the runs' model files, with two versions:
+  - <strong>version 1</strong> is <code>mobilenet_manual</code>, alias <code>challenger</code>;
+  - <strong>version 2</strong> is <code>mobilenet_ft_lr1e-4</code>, alias <strong><code>champion</code></strong>.
+- Each version carries the tags <code>run_name</code> and <code>threshold</code> (Figure 3.6a).
+- <code>scripts/load_champion.py &lt;image&gt;</code> resolves <code>models:/…@champion</code> with <code>MlflowClient.get_model_version_by_alias</code>, downloads that version's <code>.keras</code>, loads it and classifies one image.</p>
+<p><strong>How the champion file reaches the server (and why not per request).</strong>
+- <code>scripts/export_champion.py</code> downloads the champion <strong>once</strong> into <code>models/champion.keras</code> and writes <code>champion_meta.json</code> (version 2, run id).
+- The web container mounts that folder, and the cloud API image has it built in.
+- Serving therefore never calls DagsHub. A registry call per request would add seconds of latency, fail whenever DagsHub is down, and hit API rate limits.
+- Promoting a new model means: move the alias, re-run the export, then restart or rebuild.</p>
+<figure><img src="img/3.6_registry.png"><figcaption>Figure 3.6a – registry with two versions and the champion alias</figcaption></figure>
+<p>⏳ <em>Add a terminal screenshot of <code>python -m scripts.load_champion &lt;image&gt;</code>: <code>img/3.6_load_champion.png</code>.</em></p>
+<hr />
+<h1>Chapter 4: Flask web application</h1>
+<p><strong>Code layout:</strong>
+- <code>app/</code> is the web app: the factory, routes, database and templates.
+- <code>serving/</code> holds the inference and validation code shared with the API.
+- <code>api/</code> is the cloud model API.
+- <code>wsgi.py</code> is the production entrypoint.</p>
+<h2>4.1 Inference module</h2>
+<p><code>serving/inference.py::Predictor</code> (Figure 4.1):
+- loads <code>champion.keras</code> <strong>once</strong> in its constructor;
+- reads the version from <code>champion_meta.json</code>;
+- runs one warm-up prediction.</p>
+<p><code>predict(bytes)</code> calls the <strong>same function used in training</strong>, <code>src/preprocess.py::decode_resize</code> (decode to 3 channels, then bilinear resize to 224×224). Then it runs the model, which contains <code>preprocess_input</code> internally, and returns:
+- <code>label</code>: "AI-generated" if p ≥ threshold, else "Real";
+- <code>p_ai</code>;
+- <code>confidence</code>: p for AI, 1−p for Real;
+- <code>threshold</code>, <code>model_name</code>, <code>model_version</code> and <code>latency_ms</code>.</p>
+<p>Measured on my laptop: <strong>loading the model takes 36.7 s; one prediction takes about 0.3 s.</strong></p>
+<pre><code>model v2 loaded once in 36.7s, threshold 0.771
+…/AiArtData/…qFcGNfN66Fp4….jpeg   -&gt; {'label': 'AI-generated', 'p_ai': 0.9994, 'confidence': 0.9994, …, 'latency_ms': 337.2}
+…/RealArt/…lindsey-pattison….jpg  -&gt; {'label': 'Real', 'p_ai': 0.0462, 'confidence': 0.9538, …, 'latency_ms': 268.5}
+</code></pre>
+<p><strong>Why loading per request is unacceptable.</strong>
+- Every request would take about 37 s instead of 0.3 s, roughly a 100× slowdown.
+- Every request would re-read 17 MB from disk and re-allocate the whole TF graph.
+- Concurrent users would multiply the memory use and crash the container.</p>
+<p>Loading once at start-up pays the cost one time, and every request after that is fast.</p>
+<p><strong>Why training and serving preprocessing must match.</strong>
+- The model only learned the mapping for inputs prepared the training way.
+- Typical drifts include:
+  - [0, 1] instead of [0, 255] scaling;
+  - a crop instead of a stretch;
+  - RGBA handled differently;
+  - nearest-neighbour instead of bilinear resizing.
+- Any of these produces inputs the model never saw. The predictions then silently degrade (training/serving skew), and no error is raised.
+- I avoid this by construction: both paths import the same <code>decode_resize</code>, and the [-1, 1] scaling lives inside the saved model.</p>
+<p>⏳ <em>Screenshot of the same command in your terminal:</em> <code>python -m serving.inference &lt;ai.jpg&gt; &lt;real.jpg&gt;</code> → <code>img/4.1_inference_console.png</code></p>
+<h2>4.2 Routes and validation</h2>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /</code></td>
+<td>upload page</td>
+</tr>
+<tr>
+<td><code>POST /predict</code></td>
+<td>validate, predict, write a DB row, then redirect (303) to the result. The Post/Redirect/Get pattern means a refresh doesn't resubmit.</td>
+</tr>
+<tr>
+<td><code>GET /result/&lt;id&gt;</code></td>
+<td>result page, read back from the DB</td>
+</tr>
+<tr>
+<td><code>GET /history</code></td>
+<td>paginated history from the DB</td>
+</tr>
+<tr>
+<td><code>GET /health</code></td>
+<td>JSON health check</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Validation</strong> (<code>serving/validation.py</code>):
+1. <strong>Wrong type.</strong> Only <code>.jpg</code>, <code>.jpeg</code> and <code>.png</code> are accepted, the formats the model was trained on. Anything else returns 400 "Unsupported file type".
+2. <strong>Too large.</strong> <code>MAX_CONTENT_LENGTH</code> = <code>MAX_UPLOAD_MB</code> (5 MB). Werkzeug rejects larger uploads <em>before reading them</em>, and a custom 413 page explains the limit.
+3. <strong>Looks like an image but can't be decoded.</strong> Pillow fully decodes the bytes (<code>Image.open</code> + <code>load</code>). A <code>.jpg</code> containing junk returns 400 "could not be decoded". The content format must also really be JPEG or PNG, whatever the extension says.</p>
+<p><strong>Other protections:</strong>
+- <strong>File names</strong> are sanitised with <code>werkzeug.secure_filename</code>, so <code>../../evil name.png</code> is stored as <code>evil_name.png</code> and can't escape a folder.
+- <strong>Nothing is kept on disk.</strong> Werkzeug normally spools uploads over 500 KB into a temporary file. <code>app/__init__.py::InMemoryRequest</code> overrides <code>_get_file_stream</code> to use <code>BytesIO</code>, so the image only ever exists in RAM (bounded by the size limit) and is discarded after the request. Only its SHA-256 is stored.
+- <strong>Friendly error pages</strong> (<code>error.html</code>) cover 400, 404, 413, 503 (model API down) and 500. The 500 page logs the stack trace but never shows it to the user.
+- <strong>Tests.</strong> <code>tests/test_app.py</code> checks all three failure cases, file-name sanitising, the DB trail, <code>/health</code>, the 404 page and the API key (8 tests, all passing).</p>
+<p><figure><img src="img/4.2_fail_wrong_type.png"><figcaption>Figure 4.2a – wrong file type</figcaption></figure>
+<figure><img src="img/4.2_fail_too_large.png"><figcaption>Figure 4.2b – file over the size limit</figcaption></figure>
+<figure><img src="img/4.2_fail_corrupt.png"><figcaption>Figure 4.2c – file that looks like an image but cannot be decoded</figcaption></figure>
+<figure><img src="img/4.2_fail_404.png"><figcaption>Figure 4.2d – unknown result id: friendly 404</figcaption></figure></p>
+<h2>4.3 HTML and CSS</h2>
+<p>There are four Jinja templates extending <code>base.html</code>, which has a nav bar with <strong>Upload · History · Health</strong> and one stylesheet (<code>app/static/style.css</code>). It uses no JavaScript framework; a 5-line script shows a preview of the chosen image.</p>
+<p><strong>The result page shows:</strong>
+- the verdict ("Likely AI-generated" or "Likely real");
+- the confidence;
+- a bar with the p(AI) position and the threshold mark;
+- the model name and version, where the prediction was served from, the latency and the timestamp;
+- an <strong>honest caveat</strong> in plain words: the model is right about 3 in 4 times, flags roughly 1 in 5 real photos, and is confused by paintings and edited images, so the user shouldn't accuse anyone on this basis alone.</p>
+<p>The caveat numbers are the measured test results from 2.5. The layout is responsive down to phone width.</p>
+<p><em>The grey bar at the top of Figures 4.2–4.4 shows the page URL and capture time. A Playwright script added it while driving my local Chrome against the app on <code>localhost:5050</code> (real champion model, SQLite), because headless screenshots don't include the browser's own address bar.</em></p>
+<p><figure><img src="img/4.3_upload_form.png"><figcaption>Figure 4.3a – upload page with preview</figcaption></figure>
+<figure><img src="img/4.3_result_1.png"><figcaption>Figure 4.3b – result page: AI image, p(AI) = 0.999</figcaption></figure>
+<figure><img src="img/4.3_result_2.png"><figcaption>Figure 4.3c – result page: real photo, p(AI) = 0.046</figcaption></figure>
+<figure><img src="img/4.3_result_3.png"><figcaption>Figure 4.3d – result page: an AI image just below the threshold (p = 0.702) is shown as &quot;Likely real&quot; with only 30% confidence, which is exactly the case the caveat warns about</figcaption></figure>
+<figure><img src="img/4.3_history.png"><figcaption>Figure 4.3e – history page</figcaption></figure></p>
+<h2>4.4 Configuration and production server</h2>
+<p><strong>Configuration.</strong> <code>app/config.py</code> reads <strong>every</strong> setting from environment variables: <code>MODEL_PATH</code>, <code>THRESHOLD</code>, <code>DATABASE_URL</code>, <code>MAX_UPLOAD_MB</code>, <code>INFERENCE_MODE</code>, <code>MODEL_API_URL</code>, <code>MODEL_API_KEY</code>, <code>MODEL_API_TIMEOUT</code> and <code>SECRET_KEY</code>. The same image therefore runs locally, in Compose or in the cloud, with nothing hard-coded, and secrets stay out of Git and out of the image.</p>
+<p><strong>Server.</strong>
+- The app runs with <code>python wsgi.py web</code>, which serves the Flask app through <strong>waitress</strong>, a production WSGI server, with <strong><code>debug=False</code></strong>.
+- <strong>Why not <code>flask run --debug</code>.</strong> The Werkzeug development server is single-process and not hardened. Debug mode exposes an interactive debugger that can execute arbitrary Python from the browser, which means remote code execution. It also reloads code and leaks stack traces.
+- <strong>Why waitress.</strong> It handles concurrent requests with a thread pool and runs on both Windows and Linux.</p>
+<p><strong>Health check.</strong> <code>/health</code> returns:</p>
+<pre><code class="language-json">{&quot;database&quot;:&quot;ok&quot;,&quot;inference_mode&quot;:&quot;local&quot;,&quot;model_loaded&quot;:true,&quot;model_version&quot;:&quot;2&quot;,&quot;status&quot;:&quot;ok&quot;,&quot;threshold&quot;:0.771}
+</code></pre>
+<p>The status code is 503 if the DB is unreachable. Docker uses this endpoint as the container <code>HEALTHCHECK</code>.</p>
+<figure><img src="img/4.4_health.png"><figcaption>Figure 4.4 – health-check response</figcaption></figure>
+<hr />
+<h1>Chapter 5: Database trail</h1>
+<p><strong>Table.</strong> <code>app/db.py</code> defines one SQLAlchemy table, <code>predictions</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Answers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code>, <code>created_at</code> (UTC, indexed)</td>
+<td><strong>when</strong></td>
+</tr>
+<tr>
+<td><code>filename</code> (sanitised), <code>sha256</code></td>
+<td>which image, without storing it</td>
+</tr>
+<tr>
+<td><code>label</code>, <code>p_ai</code>, <code>threshold</code></td>
+<td><strong>what was decided</strong></td>
+</tr>
+<tr>
+<td><code>confidence</code></td>
+<td><strong>how confidently</strong></td>
+</tr>
+<tr>
+<td><code>model_name</code>, <code>model_version</code></td>
+<td><strong>by which model</strong></td>
+</tr>
+<tr>
+<td><code>mode</code> (local / remote), <code>latency_ms</code></td>
+<td>where it ran, and how fast</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Database.</strong> In Docker it is <strong>PostgreSQL 16</strong>. Without Docker the same code uses SQLite; only <code>DATABASE_URL</code> changes.</p>
+<p><strong>The view.</strong>
+- <code>POST /predict</code> inserts a row after every successful prediction, before redirecting.
+- The <strong>History</strong> menu (<code>/history</code>) reads the rows newest first, 20 per page, and shows time, file, decision, confidence, p(AI), model version, where it was served and latency.
+- Each row links to its result page, which is also rendered from the database.
+- Rejected uploads are not stored (no decision was made), but they are logged.</p>
+<p><strong>Querying it directly</strong> (Figure 5b):</p>
+<pre><code class="language-sql">SELECT id, created_at, label, round(p_ai::numeric,3), model_version, mode FROM predictions ORDER BY id DESC;
+</code></pre>
+<p><figure><img src="img/4.3_history.png"><figcaption>Figure 5a – history page from the database</figcaption></figure>
+⏳ <figure><img src="img/5_db_rows.png"><figcaption>Figure 5b – the same rows queried in Postgres</figcaption></figure></p>
+<hr />
+<h1>Chapter 6: Containerisation with Docker and Docker Compose</h1>
+<h2>6.1 Docker warm-up</h2>
+<p>⏳ <em>Screenshots <code>6.1a</code>–<code>6.1f</code>, following <code>report/RUNBOOK.md</code> §6.1, with the ready-made <code>nginx:alpine</code> image: pull/images, run with <code>-p 8081:80</code> and <code>-v</code>, browser, logs, <code>exec sh</code>, then stop/rm/rmi.</em></p>
+<p><strong>Definitions (my own words):</strong>
+- <strong>Image</strong>: a read-only template (filesystem + metadata such as the default command), built from a Dockerfile and identified by name:tag.
+- <strong>Container</strong>: a running (or stopped) instance of an image. It is a process with its own isolated filesystem, network and process space, plus a thin writable layer on top of the image.
+- <strong>Layer</strong>: each Dockerfile instruction produces a filesystem diff. Layers are stacked, shared between images and cached, so unchanged steps are not rebuilt.
+- <strong>Volume</strong>: storage managed outside the container's writable layer. Data in it survives container removal (our Postgres data), or it maps a host folder into the container (our model).
+- <strong>Port mapping</strong> (<code>-p host:container</code>): forwards a port on the host to a port inside the container's private network, e.g. <code>-p 5000:5000</code> makes the app reachable at localhost:5000.</p>
+<h2>6.2 Dockerfile for the web app</h2>
+<p>The file is <a href="https://github.com/Rebelhere/L230518_A2_Ops/blob/main/Dockerfile"><code>Dockerfile</code></a>. The order of instructions, and why:
+1. <strong><code>FROM python:3.12-slim</code>.</strong> It is Debian slim: about 120 MB instead of about 1 GB for the full <code>python:3.12</code> image. It still uses glibc, so TensorFlow wheels install without compiling (Alpine's musl would force source builds).
+2. <strong><code>ENV</code>.</strong> No <code>.pyc</code> files, unbuffered logs, <code>PIP_NO_CACHE_DIR</code>, and TF log level 2.
+3. <strong>Copy only the requirements files, then <code>pip install --no-cache-dir</code>.</strong>
+   - This layer is the slowest and biggest (TensorFlow).
+   - Docker reuses a cached layer as long as its inputs are unchanged. Because only the requirements files are copied before it, editing Python code <strong>doesn't</strong> invalidate this layer.
+   - A code change rebuilds in seconds instead of re-downloading about 600 MB.
+4. <strong>Copy the source code last</strong> (<code>src/config.py</code>, <code>src/preprocess.py</code>, <code>serving/</code>, <code>app/</code>, <code>api/</code>, <code>wsgi.py</code>).
+5. <strong><code>useradd app</code> + <code>USER app</code>.</strong> The container runs as an unprivileged user (UID 10001). A compromise of the app would not have root inside the container.
+6. <strong><code>HEALTHCHECK</code>.</strong> It calls <code>/health</code> every 30 s, with a 60 s start period because the model takes time to load. Docker and Compose then report <code>healthy</code> or <code>unhealthy</code>.
+7. <strong><code>CMD ["python", "wsgi.py", "web"]</code>.</strong> It starts waitress, with debug off.</p>
+<p><strong>Ignore file.</strong> <code>.dockerignore</code> excludes <code>venv/</code>, <code>data/</code> (500 MB), <code>mlruns/</code>, <code>tuner_logs/</code>, <code>.git</code>, <code>.env</code> and all non-champion models. This keeps the build context small and <strong>keeps secrets out of the image</strong>.</p>
+<p><strong>Secrets.</strong> No secret appears in the Dockerfile. Passwords and keys arrive at run time as environment variables, from Compose or Cloud Run.</p>
+<p><strong>TensorFlow package.</strong> I chose <strong><code>tensorflow-cpu==2.21.0</code></strong> (with <code>keras==3.15.1</code>, the training versions) instead of <code>tensorflow</code>.
+- The full Linux wheel bundles CUDA/GPU kernels, which the server (no GPU) would never use, and its installed size is several hundred MB bigger.
+- Inference on one 224×224 image takes about 0.3 s on a CPU, which is fast enough for this product.</p>
+<figure><img src="img/6.2_whoami.png"><figcaption>Figure 6.2 – user inside the container is app, not root</figcaption></figure>
+<h2>6.3 Compose stack</h2>
+<p>The file is <a href="https://github.com/Rebelhere/L230518_A2_Ops/blob/main/docker-compose.yml"><code>docker-compose.yml</code></a>. It defines two services:
+- <strong><code>db</code></strong>: <code>postgres:16-alpine</code>.
+  - Data lives in the <strong>named volume <code>pgdata</code></strong>, so history survives <code>docker compose down</code> and rebuilds.
+  - <strong>Health check:</strong> <code>pg_isready</code> every 5 s.
+  - It has <strong>no <code>ports:</code> section</strong>, so Postgres is reachable only on Compose's internal network and is closed from outside.
+- <strong><code>web</code></strong>: built from the Dockerfile.
+  - <code>depends_on: db: condition: service_healthy</code> means it starts only when Postgres accepts connections, so it never crashes on a not-yet-ready DB.
+  - It reaches the DB <strong>by service name</strong>: <code>DATABASE_URL=postgresql+psycopg://…@db:5432/…</code>. Compose's internal DNS resolves <code>db</code>.
+  - It publishes port 5000 for the browser.</p>
+<p><strong>Passwords.</strong> All passwords and keys are <code>${VAR}</code> substitutions read from the untracked <code>.env</code>. <code>.env.example</code> (committed) lists every variable with placeholder values.</p>
+<p><strong>How the model reaches the container: mounted.</strong> <code>./models:/models:ro</code> (read-only bind mount). Reasons:
+- The model is versioned by the <strong>registry</strong>, not by the image. Promoting a new champion means re-running <code>scripts/export_champion.py</code> and restarting the container, with no rebuild.
+- The 17 MB model is not baked into an image that CI builds from GitHub, where <code>models/</code> is git-ignored.
+- Read-only means the app can't modify it.</p>
+<p>For the cloud, the opposite choice is right, and <code>Dockerfile.api</code> builds the model in. That is explained in Chapter 7.</p>
+<p>⏳ <figure><img src="img/6.3a_ps_healthy.png"><figcaption>Figure 6.3a – both services healthy</figcaption></figure>
+⏳ <figure><img src="img/6.3b_db_closed.png"><figcaption>Figure 6.3b – port 5432 is closed from the host</figcaption></figure></p>
+<h2>6.4 Image analysis</h2>
+<p>⏳ <em>Fill in after running RUNBOOK §6.4:</em></p>
+<table>
+<thead>
+<tr>
+<th>Image</th>
+<th>Base</th>
+<th>TF package</th>
+<th>pip cache</th>
+<th>Size</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>visionguard:naive</code> (<code>Dockerfile.naive</code>)</td>
+<td>python:3.12 (full)</td>
+<td>tensorflow</td>
+<td>kept</td>
+<td>⏳</td>
+</tr>
+<tr>
+<td><code>l230518_a2_ops-web</code> (<code>Dockerfile</code>)</td>
+<td>python:3.12-slim</td>
+<td>tensorflow-cpu</td>
+<td>none</td>
+<td>⏳</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Largest layers.</strong> <code>docker history</code> shows which layers are largest. By far the largest is the <code>pip install</code> layer (TensorFlow, about 90% of the image), followed by the base OS layer. The source code layers are only kilobytes.</p>
+<p><strong>Optimisation applied.</strong> A slim base, the CPU-only wheel, <code>--no-cache-dir</code> and the ignore file. ⏳ <em>Conclusion with the two numbers.</em></p>
+<h2>6.5 Operations and troubleshooting</h2>
+<p>⏳ <em>Screenshots for start/stop/restart/logs/exec in both services (RUNBOOK §6.5).</em></p>
+<p><strong>Deliberate failure: missing model file.</strong>
+1. I renamed <code>models/champion.keras</code> and recreated <code>web</code>. The container exited and restarted in a loop.
+2. <strong>Diagnosis, from the logs only</strong> (<code>docker compose logs web</code>):</p>
+<p><code>⏳ FileNotFoundError: model file not found at /models/champion.keras (run scripts/export_champion.py or mount the models folder)</code></p>
+<p>The traceback ends in <code>Predictor.__init__</code>, which runs at start-up, so the problem is the mount or the file, not the code.
+3. <strong>Fix:</strong> restore the file (or re-export the champion), then <code>docker compose up -d --force-recreate web</code>. The service returned to <code>healthy</code>.</p>
+<p>I made the error message name the exact path and the command that fixes it, so that this diagnosis works from logs alone.</p>
+<hr />
+<h2>6.6 Tool lab: GitHub Actions (CI)</h2>
+<p><strong>Toy part.</strong> The repository <code>Rebelhere/L230518_A2_Ops_ci_toy</code> has a workflow <code>.github/workflows/ci.yml</code>:
+- it runs on every push;
+- it uses a <strong>matrix of Python 3.11 and 3.12</strong>;
+- it installs pytest and runs <code>test_calc.py</code>.</p>
+<p>I changed one assertion to make it fail (red run), then fixed it (green run).</p>
+<p>⏳ <figure><img src="img/6.6a_red.png"><figcaption>Figure 6.6a – red toy run</figcaption></figure> ⏳ <figure><img src="img/6.6b_green.png"><figcaption>Figure 6.6b – green toy run</figcaption></figure></p>
+<p><strong>Apply.</strong> The VisionGuard workflow (<code>.github/workflows/ci.yml</code>) has two jobs:
+- <strong><code>test</code></strong>: checkout, set up Python 3.12 with a pip cache, install <code>requirements-app.txt</code> + pytest + ruff, then <strong>lint</strong> with <code>ruff check</code> and run the <strong>tests</strong> with <code>pytest</code>.
+  - The tests use a fake predictor and SQLite, so CI doesn't need TensorFlow or the model and takes about a minute.
+- <strong><code>docker</code></strong>: needs <code>test</code> to pass, then <strong>builds the Docker image</strong>, which proves the Dockerfile and requirements still work.</p>
+<p>The README shows the status badge.</p>
+<p><strong>Where workflow secrets are stored.</strong> In the repository's <strong>Settings → Secrets and variables → Actions</strong>. They are encrypted at rest, injected only at run time as <code>${{ secrets.NAME }}</code>, and masked as <code>***</code> in logs. They must never be written in the workflow file. That file is committed to Git, so everyone who can read the repository (here, the whole internet) would see the secret, and it would stay in the Git history forever even after deletion. This workflow needs no secrets at all.</p>
+<p>⏳ <figure><img src="img/6.6c_project_green.png"><figcaption>Figure 6.6c – green project run</figcaption></figure> ⏳ <figure><img src="img/6.6d_badge.png"><figcaption>Figure 6.6d – badge in README</figcaption></figure></p>
+<hr />
+<h1>Chapter 7: API deployment (Google Cloud Run, pathway C)</h1>
+<p><strong>Why not Vercel.</strong>
+- Vercel's Python functions are limited to about 250 MB unzipped, and TensorFlow alone is bigger, so the model can't run there.
+- Functions also have no persistent disk (SQLite would vanish) and short time limits.</p>
+<p><strong>Why Cloud Run.</strong> It runs any container:
+- 2 GiB memory;
+- HTTPS by default;
+- scales to zero when idle;
+- the free tier (2 M requests and 360k GiB-seconds per month) covers this project.</p>
+<p><strong>Mapping the Compose elements to Google Cloud:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Compose element</th>
+<th>Cloud equivalent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>build:</code> / image</td>
+<td>image pushed to <strong>Artifact Registry</strong> (<code>us-central1-docker.pkg.dev/l230518-a2-ops/l230518-a2-ops/api</code>)</td>
+</tr>
+<tr>
+<td>service container</td>
+<td><strong>Cloud Run service</strong> <code>l230518-a2-ops-api</code></td>
+</tr>
+<tr>
+<td><code>environment:</code> / <code>.env</code></td>
+<td><code>--set-env-vars</code> (key, threshold)</td>
+</tr>
+<tr>
+<td><code>ports: 5000:5000</code></td>
+<td>Cloud Run's HTTPS URL → container <code>$PORT</code> 8080</td>
+</tr>
+<tr>
+<td><code>HEALTHCHECK</code> / <code>/health</code></td>
+<td>Cloud Run startup probe on the port + <code>/health</code></td>
+</tr>
+<tr>
+<td><code>restart: unless-stopped</code></td>
+<td>Cloud Run restarts failed instances automatically</td>
+</tr>
+<tr>
+<td><code>db</code> + <code>pgdata</code> volume</td>
+<td>stays on localhost with the Flask app (Task 7: Flask runs locally)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Model API</strong> (<code>api/main.py</code>):
+- <strong><code>POST /predict</code></strong> takes a multipart field <code>image</code> and the header <code>X-API-Key</code>.
+  - The key is compared with <code>hmac.compare_digest</code>, so the comparison takes constant time.
+  - It uses the same validation and <code>Predictor</code> as the web app, and returns JSON.
+- <strong><code>GET /health</code></strong> is public.
+- The API <strong>refuses to start without <code>MODEL_API_KEY</code></strong>, so it can never run unprotected by mistake.</p>
+<p><strong>Model delivery.</strong> <code>Dockerfile.api</code> <strong>builds the champion model into the image</strong>. Cloud Run has no host folder to mount, and a baked image is an immutable, versioned unit (tag <code>api:v2</code> = registry version 2). Serving still never calls DagsHub.</p>
+<p><strong>Step-by-step deployment</strong> (commands in RUNBOOK §7):
+1. Create the GCP project <code>l230518-a2-ops</code> and link billing. ⏳ <em>Figure 7a</em>
+2. <code>gcloud auth login</code>, then <code>gcloud config set project l230518-a2-ops</code>.
+3. <code>gcloud services enable run.googleapis.com artifactregistry.googleapis.com</code>.
+4. Create the Docker repository: <code>gcloud artifacts repositories create l230518-a2-ops --repository-format=docker --location=us-central1</code>.
+5. <code>gcloud auth configure-docker us-central1-docker.pkg.dev</code>, so Docker can push to it.
+6. <code>python -m scripts.export_champion</code>, so <code>models/champion.keras</code> is the registry champion.
+7. Build and push: <code>docker build -f Dockerfile.api -t …/api:v2 .</code> then <code>docker push …/api:v2</code>. ⏳ <em>Figure 7b</em>
+8. Deploy with <code>gcloud run deploy l230518-a2-ops-api --image …/api:v2 --region us-central1 --memory 2Gi --cpu 1 --cpu-boost --timeout 120 --min-instances 0 --max-instances 1 --allow-unauthenticated --set-env-vars MODEL_API_KEY=…,THRESHOLD=0.771</code>. ⏳ <em>Figure 7c, which shows the service URL.</em>
+   - <code>--max-instances 1</code> caps cost.
+   - <code>--cpu-boost</code> shortens the cold start, while the model loads.
+   - <code>--allow-unauthenticated</code> only makes the URL reachable; <code>/predict</code> still requires the API key.
+9. Check the service page and logs in the console. ⏳ <em>Figures 7d, 7e</em></p>
+<p><strong>API URL:</strong> ⏳ <code>https://l230518-a2-ops-api-….run.app</code> (endpoints <code>/health</code>, <code>/predict</code>).</p>
+<p><strong>Postman test from another network</strong> (mobile hotspot):
+- <code>POST /predict</code>, header <code>X-API-Key</code>, form-data <code>image</code> → 200 with JSON. ⏳ <em>Figure 7f</em>
+- The same call without the key → 401 <code>missing or invalid X-API-Key</code>. ⏳ <em>Figure 7g</em>
+- A <code>.txt</code> file → 400. ⏳ <em>Figure 7h</em></p>
+<p><strong>What went wrong / limits.</strong>
+- The first request after idle is a <strong>cold start</strong>: the container starts and loads TF and the model, which takes about 10–20 s. Later requests take well under a second.
+- The free tier would normally keep one warm instance with <code>--min-instances 1</code>, but that costs money, so I accepted cold starts.</p>
+<hr />
+<h1>Chapter 8: Integrating Flask and the API</h1>
+<p><strong>How it works.</strong>
+- The Flask app keeps running on <strong>localhost</strong> in Docker Compose, with Postgres beside it.
+- With <code>INFERENCE_MODE=remote</code>, <code>app/predictors.py::RemotePredictor</code>:
+  - keeps one <code>requests.Session</code> with the <code>X-API-Key</code> header set;
+  - POSTs the validated image bytes to <code>MODEL_API_URL/predict</code>, with a 30 s timeout that is enough for a cold start;
+  - stores the returned decision in the database with <code>mode='remote'</code>.
+- If the API is unreachable or returns an error, the user sees a friendly 503 page and nothing wrong is logged as a decision.
+- <code>/health</code> also reports whether the cloud API is reachable and which model version it serves.</p>
+<p><strong>Why this design.</strong>
+- The same web code runs both ways; only environment variables change.
+- The heavy model runs in the cloud.
+- The database and the UI stay local, as the task asks.</p>
+<p><strong>Demonstration.</strong> ⏳ <em>Screenshots, captured after deployment:</em>
+- <code>/health</code> in remote mode;
+- 5 or more different uploads: AI, real, PNG, and a wrong file;
+- the History page showing <strong>Served by: cloud API</strong>;
+- the matching Cloud Run log lines with the same SHA-256 prefixes.</p>
+<hr />
+<h1>Chapter 9: Summary and what I learned</h1>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1 Data and DVC</td>
+<td>✔</td>
+</tr>
+<tr>
+<td>2 Models, evaluation, tuner</td>
+<td>✔ (+ Grad-CAM bonus)</td>
+</tr>
+<tr>
+<td>3 MLflow / DagsHub / registry</td>
+<td>✔</td>
+</tr>
+<tr>
+<td>4 Flask app</td>
+<td>✔</td>
+</tr>
+<tr>
+<td>5 Database</td>
+<td>✔</td>
+</tr>
+<tr>
+<td>6 Docker / Compose / CI</td>
+<td>✔ ⏳ screenshots</td>
+</tr>
+<tr>
+<td>7 Cloud API</td>
+<td>⏳</td>
+</tr>
+<tr>
+<td>8 Integration</td>
+<td>⏳</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Key lessons:</strong>
+1. <strong>Measure the threshold, don't assume 0.5.</strong> The business cost of false alarms moved it to 0.771.
+2. <strong>Share one preprocessing function</strong> between training and serving.
+3. <strong>Load the model once.</strong> 37 s vs 0.3 s.
+4. <strong>A small validation set makes "best run" noisy.</strong> That is why the test set is used once, at the very end.
+5. <strong>The dataset's "real" class contains paintings and edited images</strong>, and the model learned style as a shortcut. A better dataset would be the most valuable next step.</p>
