@@ -1,0 +1,8 @@
+run,model,head_lr,ft_lr,aug,ft_epochs,val_acc,val_prec,val_rec,val_f1,val_auc,thr
+mobilenet_ft_lr1e-4,mobilenet,0.001,0.0001,True,10,0.7534,0.7184,0.9136,0.8043,0.8351,0.3655
+mobilenet_manual,mobilenet,0.001,1e-05,True,10,0.7397,0.7009,0.9259,0.7979,0.8072,0.3063
+mobilenet_no_aug,mobilenet,0.001,1e-05,False,10,0.7055,0.6696,0.9259,0.7772,0.8028,0.2137
+mobilenet_head_only,mobilenet,0.001,1e-05,True,0,0.7123,0.6893,0.8765,0.7717,0.7808,0.2777
+mobilenet_autolog,mobilenet,0.001,1e-05,True,10,0.6918,0.6579,0.9259,0.7692,0.7789,0.3027
+mobilenet_lr1e-4,mobilenet,0.0001,1e-05,True,10,0.6575,0.6372,0.8889,0.7423,0.7519,0.2805
+cnn_baseline,cnn,0.001,1e-05,True,0,0.6096,0.5896,0.9753,0.7349,0.6389,0.3636
